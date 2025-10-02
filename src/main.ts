@@ -103,6 +103,9 @@ async function initEditor() {
 
   // Sincronizar el color de fondo del editor con la consola
   syncEditorBackground()
+
+  // Sincronizar colores del tema
+  syncThemeColors()
 }
 
 // Sincronizar el color de fondo del editor con la consola y header
@@ -126,6 +129,50 @@ function syncEditorBackground() {
   }
 }
 
+// Sincronizar colores del tema para syntax highlighting en logs
+function syncThemeColors() {
+  if (!editor) return
+
+  try {
+    // Obtener el elemento DOM del editor
+    const editorDomNode = editor.getDomNode()
+    if (!editorDomNode) return
+
+    // Buscar elementos con los tokens de Monaco para extraer sus colores
+    const getTokenColor = (selector: string): string | null => {
+      // Crear un elemento temporal con el token de Monaco
+      const tempElement = document.createElement('span')
+      tempElement.className = selector
+      tempElement.style.position = 'absolute'
+      tempElement.style.visibility = 'hidden'
+      editorDomNode.appendChild(tempElement)
+
+      const color = window.getComputedStyle(tempElement).color
+      editorDomNode.removeChild(tempElement)
+
+      return color || null
+    }
+
+    // Mapear tokens de Monaco a variables CSS
+    const stringColor = getTokenColor('mtk12') || '#ce9178' // strings
+    const numberColor = getTokenColor('mtk9') || '#b5cea8' // numbers
+    const keywordColor = getTokenColor('mtk9') || '#569cd6' // keywords/booleans
+    const commentColor = getTokenColor('mtk3') || '#6a9955' // comments
+    const functionColor = getTokenColor('mtk12') || '#dcdcaa' // functions
+    const booleanColor = getTokenColor('mtk9') || '#569cd6' // booleans
+
+    // Establecer variables CSS
+    document.documentElement.style.setProperty('--theme-string', stringColor)
+    document.documentElement.style.setProperty('--theme-number', numberColor)
+    document.documentElement.style.setProperty('--theme-keyword', keywordColor)
+    document.documentElement.style.setProperty('--theme-comment', commentColor)
+    document.documentElement.style.setProperty('--theme-function', functionColor)
+    document.documentElement.style.setProperty('--theme-boolean', booleanColor)
+  } catch (error) {
+    console.error('Error al sincronizar colores del tema:', error)
+  }
+}
+
 // Mapa de imports estáticos de temas
 const themeImports: Record<string, () => Promise<any>> = {
   'vitesse-dark': () => import('tm-themes/themes/vitesse-dark.json'),
@@ -136,6 +183,7 @@ const themeImports: Record<string, () => Promise<any>> = {
   monokai: () => import('tm-themes/themes/monokai.json'),
   nord: () => import('tm-themes/themes/nord.json'),
   'tokyo-night': () => import('tm-themes/themes/tokyo-night.json'),
+  'one-dark-pro': () => import('tm-themes/themes/one-dark-pro.json'),
 }
 
 // Cargar y aplicar un tema dinámicamente desde tm-themes
@@ -179,6 +227,9 @@ async function changeTheme(themeName: string) {
     // Sincronizar background
     await new Promise((resolve) => setTimeout(resolve, 100))
     syncEditorBackground()
+
+    // Sincronizar colores del tema para syntax highlighting
+    syncThemeColors()
 
     console.log('Theme applied successfully:', themeName)
   } catch (error) {
@@ -238,9 +289,21 @@ function runCode() {
     } else {
       const contentSpan = document.createElement('span')
       contentSpan.className = 'log-content'
-      // Para table, data está en el primer argumento
-      const args = data !== undefined ? [data] : []
-      contentSpan.textContent = args.map((arg) => formatValue(arg)).join(' ')
+
+      // Formatear el contenido con syntax highlighting
+      if (Array.isArray(data)) {
+        // Múltiples argumentos
+        data.forEach((arg, index) => {
+          if (index > 0) {
+            contentSpan.appendChild(document.createTextNode(' '))
+          }
+          appendFormattedValue(contentSpan, arg)
+        })
+      } else {
+        // Un solo argumento
+        appendFormattedValue(contentSpan, data)
+      }
+
       entry.appendChild(contentSpan)
     }
 
@@ -248,7 +311,7 @@ function runCode() {
     if (lineNumber !== null) {
       const lineSpan = document.createElement('span')
       lineSpan.className = 'log-line-number'
-      lineSpan.textContent = `:${lineNumber}`
+      lineSpan.textContent = `L${lineNumber}`
       entry.appendChild(lineSpan)
 
       // Agregar eventos de hover para destacar la línea en el editor
@@ -277,22 +340,22 @@ function runCode() {
     log: (...args: any[]) => {
       const stack = new Error().stack || ''
       const lineNumber = extractLineNumber(stack)
-      addLog('log', lineNumber, args.join(' '))
+      addLog('log', lineNumber, args.length === 1 ? args[0] : args)
     },
     info: (...args: any[]) => {
       const stack = new Error().stack || ''
       const lineNumber = extractLineNumber(stack)
-      addLog('info', lineNumber, args.join(' '))
+      addLog('info', lineNumber, args.length === 1 ? args[0] : args)
     },
     warn: (...args: any[]) => {
       const stack = new Error().stack || ''
       const lineNumber = extractLineNumber(stack)
-      addLog('warn', lineNumber, args.join(' '))
+      addLog('warn', lineNumber, args.length === 1 ? args[0] : args)
     },
     error: (...args: any[]) => {
       const stack = new Error().stack || ''
       const lineNumber = extractLineNumber(stack)
-      addLog('error', lineNumber, args.join(' '))
+      addLog('error', lineNumber, args.length === 1 ? args[0] : args)
     },
     time: (label: string = 'default') => {
       timers.set(label, performance.now())
@@ -376,28 +439,77 @@ function runCode() {
   }
 }
 
-// Formatear valores para mostrar en consola
-function formatValue(value: any): string {
+// Añadir valor formateado al contenedor con syntax highlighting
+function appendFormattedValue(container: HTMLElement, value: any) {
   if (value === null) {
-    return 'null'
-  }
-  if (value === undefined) {
-    return 'undefined'
-  }
-  if (typeof value === 'string') {
-    return value
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value)
-  }
-  if (typeof value === 'object') {
+    const span = document.createElement('span')
+    span.className = 'log-null'
+    span.textContent = 'null'
+    container.appendChild(span)
+  } else if (value === undefined) {
+    const span = document.createElement('span')
+    span.className = 'log-undefined'
+    span.textContent = 'undefined'
+    container.appendChild(span)
+  } else if (typeof value === 'string') {
+    const span = document.createElement('span')
+    span.className = 'log-string'
+    span.textContent = `"${value}"`
+    container.appendChild(span)
+  } else if (typeof value === 'number') {
+    const span = document.createElement('span')
+    span.className = 'log-number'
+    span.textContent = String(value)
+    container.appendChild(span)
+  } else if (typeof value === 'boolean') {
+    const span = document.createElement('span')
+    span.className = 'log-boolean'
+    span.textContent = String(value)
+    container.appendChild(span)
+  } else if (typeof value === 'function') {
+    const span = document.createElement('span')
+    span.className = 'log-function'
+    span.textContent = value.toString()
+    container.appendChild(span)
+  } else if (typeof value === 'object') {
     try {
-      return JSON.stringify(value, null, 2)
+      const json = JSON.stringify(value, null, 2)
+      const pre = document.createElement('pre')
+      pre.className = 'log-object'
+      pre.innerHTML = syntaxHighlightJSON(json)
+      container.appendChild(pre)
     } catch {
-      return String(value)
+      const span = document.createElement('span')
+      span.className = 'log-object'
+      span.textContent = String(value)
+      container.appendChild(span)
     }
+  } else {
+    container.appendChild(document.createTextNode(String(value)))
   }
-  return String(value)
+}
+
+// Syntax highlighting para JSON
+function syntaxHighlightJSON(json: string): string {
+  return json.replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    (match) => {
+      let cls = 'log-json-number'
+      if (/^"/.test(match)) {
+        if (/:$/.test(match)) {
+          cls = 'log-json-key'
+          match = match.slice(0, -1) // Remover el ':'
+        } else {
+          cls = 'log-json-string'
+        }
+      } else if (/true|false/.test(match)) {
+        cls = 'log-json-boolean'
+      } else if (/null/.test(match)) {
+        cls = 'log-json-null'
+      }
+      return `<span class="${cls}">${match}</span>` + (cls === 'log-json-key' ? ':' : '')
+    },
+  )
 }
 
 // Crear elemento de tabla HTML para console.table
