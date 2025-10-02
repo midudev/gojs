@@ -12,6 +12,7 @@ export const AVAILABLE_THEMES = [
   'monokai',
   'nord',
   'tokyo-night',
+  'one-dark-pro',
 ] as const
 
 export type Theme = (typeof AVAILABLE_THEMES)[number]
