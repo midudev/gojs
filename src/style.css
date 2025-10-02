@@ -40,12 +40,12 @@ body {
 .header {
   background-color: var(--editor-background, var(--color-bg-primary));
   border-bottom: 1px solid var(--color-border);
-  padding: 10px 16px;
+  padding: 6px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
-  height: 44px;
+  height: 36px;
 }
 
 .tabs-container {
@@ -154,6 +154,7 @@ body {
 .output-content {
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 16px;
   font-family: var(--font-mono);
   font-size: 13px;
@@ -255,28 +256,66 @@ body {
   white-space: nowrap;
 }
 
-.log-object {
-  color: #ce9178;
-}
-
+/* Syntax highlighting para valores en logs - usa colores del tema del editor */
 .log-string {
-  color: #ce9178;
+  color: var(--theme-string, #ce9178);
 }
 
 .log-number {
-  color: #b5cea8;
+  color: var(--theme-number, #b5cea8);
 }
 
 .log-boolean {
-  color: #569cd6;
+  color: var(--theme-boolean, #569cd6);
 }
 
 .log-null {
-  color: #569cd6;
+  color: var(--theme-keyword, #569cd6);
+  font-style: italic;
 }
 
 .log-undefined {
-  color: #569cd6;
+  color: var(--theme-keyword, #569cd6);
+  font-style: italic;
+}
+
+.log-function {
+  color: var(--theme-function, #dcdcaa);
+  font-style: italic;
+}
+
+.log-object {
+  color: var(--color-text-primary);
+  margin: 4px 0;
+  padding: 8px;
+  background-color: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+  border-left: 2px solid var(--theme-string, rgba(206, 145, 120, 0.3));
+  font-family: var(--font-mono);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* JSON syntax highlighting - usa colores del tema del editor */
+.log-json-key {
+  color: var(--theme-function, #9cdcfe);
+}
+
+.log-json-string {
+  color: var(--theme-string, #ce9178);
+}
+
+.log-json-number {
+  color: var(--theme-number, #b5cea8);
+}
+
+.log-json-boolean {
+  color: var(--theme-boolean, #569cd6);
+}
+
+.log-json-null {
+  color: var(--theme-keyword, #569cd6);
+  font-style: italic;
 }
 
 /* Console Table */
@@ -332,21 +371,29 @@ body {
 
 /* Scrollbar */
 .output-content::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
   height: 8px;
 }
 
 .output-content::-webkit-scrollbar-track {
-  background: var(--color-bg-primary);
+  background: transparent;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
 }
 
 .output-content::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border-radius: 10px;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 3px solid transparent;
+  border-bottom: 6px solid transparent;
+  background-clip: padding-box;
 }
 
 .output-content::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-secondary);
+  background-clip: padding-box;
 }
 
 /* Settings Modal */
@@ -473,6 +520,7 @@ body {
 .settings-content {
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 24px;
 }
 
