@@ -579,3 +579,7 @@ body {
     border-top: 1px solid var(--color-border);
   }
 }
+
+.mtku {
+  text-decoration: none !important;
+}
