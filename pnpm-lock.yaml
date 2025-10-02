@@ -9,23 +9,26 @@ importers:
   .:
     dependencies:
       modern-monaco:
-        specifier: ^0.2.2
+        specifier: 0.2.2
         version: 0.2.2(typescript@5.9.3)
+      prettier:
+        specifier: 3.6.2
+        version: 3.6.2
       tm-themes:
-        specifier: ^1.10.9
+        specifier: 1.10.9
         version: 1.10.9
     devDependencies:
       '@tauri-apps/cli':
-        specifier: ^2.8.4
+        specifier: 2.8.4
         version: 2.8.4
       '@types/node':
-        specifier: ^24.6.2
+        specifier: 24.6.2
         version: 24.6.2
       typescript:
-        specifier: ^5.9.3
+        specifier: 5.9.3
         version: 5.9.3
       vite:
-        specifier: ^7.1.8
+        specifier: 7.1.8
         version: 7.1.8(@types/node@24.6.2)
 
 packages:
@@ -413,6 +416,11 @@ packages:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
 
+  prettier@3.6.2:
+    resolution: {integrity: sha512-I7AIg5boAr5R0FFtJ6rCfD+LFsWHp81dolrFD8S79U9tb8Az2nGrJncnMSnys+bpQJfRUzqs9hnA81OAA3hCuQ==}
+    engines: {node: '>=14'}
+    hasBin: true
+
   rollup@4.52.3:
     resolution: {integrity: sha512-RIDh866U8agLgiIcdpB+COKnlCreHJLfIhWC3LVflku5YHfpnsIKigRZeFfMfCc4dVcqNVfQQ5gO/afOck064A==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
@@ -727,6 +735,8 @@ snapshots:
       nanoid: 3.3.11
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  prettier@3.6.2: {}
 
   rollup@4.52.3:
     dependencies:
