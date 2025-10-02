@@ -16,7 +16,7 @@
   --color-success: #66bb6a;
   --color-error: #ef5350;
   --color-warning: #ffa726;
-  
+
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'Menlo', monospace, 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 }
@@ -135,7 +135,6 @@ body {
   background-color: var(--color-accent);
 }
 
-
 /* Monaco Editor */
 #editor {
   width: 100%;
@@ -163,7 +162,7 @@ body {
 }
 
 .output-content:empty::before {
-  content: "Ejecuta tu código para ver la salida aquí...";
+  content: 'Ejecuta tu código para ver la salida aquí...';
   color: var(--color-text-secondary);
   font-style: italic;
 }
@@ -186,7 +185,7 @@ body {
   &:hover {
     border: 1px solid var(--color-border);
   }
-  
+
   &.log {
     background-color: rgba(255, 255, 255, 0.03);
   }
@@ -205,7 +204,7 @@ body {
     background-color: rgba(239, 83, 80, 0.05);
     color: var(--color-error);
   }
-  
+
   &.time {
     background-color: rgba(156, 39, 176, 0.05);
     color: #ba68c8;
@@ -222,7 +221,6 @@ body {
     padding: 12px;
     position: relative;
   }
-
 
   &.table .log-line-number {
     position: absolute;
@@ -501,8 +499,8 @@ body {
 }
 
 .setting-item select,
-.setting-item input[type="number"],
-.setting-item input[type="text"] {
+.setting-item input[type='number'],
+.setting-item input[type='text'] {
   width: 100%;
   background-color: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
@@ -533,7 +531,7 @@ body {
   padding: 8px 0;
 }
 
-.setting-item-checkbox input[type="checkbox"] {
+.setting-item-checkbox input[type='checkbox'] {
   width: 18px;
   height: 18px;
   cursor: pointer;
@@ -581,4 +579,3 @@ body {
     border-top: 1px solid var(--color-border);
   }
 }
-

@@ -12,27 +12,24 @@ export const AVAILABLE_THEMES = [
   'monokai',
   'nord',
   'tokyo-night',
-] as const;
+] as const
 
-export type Theme = typeof AVAILABLE_THEMES[number];
+export type Theme = (typeof AVAILABLE_THEMES)[number]
 
 // Fuentes disponibles
-export const AVAILABLE_FONTS = [
-  'JetBrains Mono',
-  'Cascadia Code',
-] as const;
+export const AVAILABLE_FONTS = ['JetBrains Mono', 'Cascadia Code'] as const
 
-export type FontFamily = typeof AVAILABLE_FONTS[number];
+export type FontFamily = (typeof AVAILABLE_FONTS)[number]
 
 export interface EditorSettings {
-  theme: Theme;
-  fontSize: number;
-  fontFamily: FontFamily;
-  minimap: boolean;
-  lineNumbers: boolean;
-  debounceDelay: number;
-  formatOnPaste: boolean;
-  formatOnType: boolean;
+  theme: Theme
+  fontSize: number
+  fontFamily: FontFamily
+  minimap: boolean
+  lineNumbers: boolean
+  debounceDelay: number
+  formatOnPaste: boolean
+  formatOnType: boolean
 }
 
 export const DEFAULT_SETTINGS: EditorSettings = {
@@ -44,48 +41,48 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   debounceDelay: 800,
   formatOnPaste: true,
   formatOnType: true,
-};
+}
 
 /**
  * Calcula el line-height óptimo basado en el tamaño de fuente
  */
 export function calculateLineHeight(fontSize: number): number {
   // Usar un ratio de 1.57 (aproximadamente golden ratio)
-  return Math.round(fontSize * 1.57);
+  return Math.round(fontSize * 1.57)
 }
 
-const STORAGE_KEY = 'xjs-settings';
+const STORAGE_KEY = 'xjs-settings'
 
 /**
  * Valida que el tema esté disponible
  */
 function isValidTheme(theme: string): theme is Theme {
-  return AVAILABLE_THEMES.includes(theme as Theme);
+  return AVAILABLE_THEMES.includes(theme as Theme)
 }
 
 /**
  * Valida un valor numérico dentro de un rango
  */
 function validateNumber(value: any, min: number, max: number, defaultValue: number): number {
-  const num = Number(value);
+  const num = Number(value)
   if (isNaN(num) || num < min || num > max) {
-    return defaultValue;
+    return defaultValue
   }
-  return num;
+  return num
 }
 
 /**
  * Valida un valor booleano
  */
 function validateBoolean(value: any, defaultValue: boolean): boolean {
-  return typeof value === 'boolean' ? value : defaultValue;
+  return typeof value === 'boolean' ? value : defaultValue
 }
 
 /**
  * Valida que la fuente esté disponible
  */
 function isValidFont(font: string): font is FontFamily {
-  return AVAILABLE_FONTS.includes(font as FontFamily);
+  return AVAILABLE_FONTS.includes(font as FontFamily)
 }
 
 /**
@@ -93,19 +90,16 @@ function isValidFont(font: string): font is FontFamily {
  */
 function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
   return {
-    theme: settings.theme && isValidTheme(settings.theme) 
-      ? settings.theme 
-      : DEFAULT_SETTINGS.theme,
+    theme: settings.theme && isValidTheme(settings.theme) ? settings.theme : DEFAULT_SETTINGS.theme,
     fontSize: validateNumber(settings.fontSize, 10, 30, DEFAULT_SETTINGS.fontSize),
-    fontFamily: settings.fontFamily && isValidFont(settings.fontFamily)
-      ? settings.fontFamily
-      : DEFAULT_SETTINGS.fontFamily,
+    fontFamily:
+      settings.fontFamily && isValidFont(settings.fontFamily) ? settings.fontFamily : DEFAULT_SETTINGS.fontFamily,
     minimap: validateBoolean(settings.minimap, DEFAULT_SETTINGS.minimap),
     lineNumbers: validateBoolean(settings.lineNumbers, DEFAULT_SETTINGS.lineNumbers),
     debounceDelay: validateNumber(settings.debounceDelay, 100, 5000, DEFAULT_SETTINGS.debounceDelay),
     formatOnPaste: validateBoolean(settings.formatOnPaste, DEFAULT_SETTINGS.formatOnPaste),
     formatOnType: validateBoolean(settings.formatOnType, DEFAULT_SETTINGS.formatOnType),
-  };
+  }
 }
 
 /**
@@ -114,18 +108,17 @@ function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
  */
 export function loadSettings(): EditorSettings {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    
+    const stored = localStorage.getItem(STORAGE_KEY)
+
     if (!stored) {
-      return DEFAULT_SETTINGS;
+      return DEFAULT_SETTINGS
     }
 
-    const parsed = JSON.parse(stored);
-    return validateSettings(parsed);
-    
+    const parsed = JSON.parse(stored)
+    return validateSettings(parsed)
   } catch (error) {
-    console.warn('Error loading settings from localStorage:', error);
-    return DEFAULT_SETTINGS;
+    console.warn('Error loading settings from localStorage:', error)
+    return DEFAULT_SETTINGS
   }
 }
 
@@ -135,12 +128,12 @@ export function loadSettings(): EditorSettings {
  */
 export function saveSettings(settings: EditorSettings): boolean {
   try {
-    const validated = validateSettings(settings);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(validated));
-    return true;
+    const validated = validateSettings(settings)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(validated))
+    return true
   } catch (error) {
-    console.error('Error saving settings to localStorage:', error);
-    return false;
+    console.error('Error saving settings to localStorage:', error)
+    return false
   }
 }
 
@@ -150,12 +143,12 @@ export function saveSettings(settings: EditorSettings): boolean {
 export function updateSetting<K extends keyof EditorSettings>(
   currentSettings: EditorSettings,
   key: K,
-  value: EditorSettings[K]
+  value: EditorSettings[K],
 ): EditorSettings {
-  const newSettings = { ...currentSettings, [key]: value };
-  const validated = validateSettings(newSettings);
-  saveSettings(validated);
-  return validated;
+  const newSettings = { ...currentSettings, [key]: value }
+  const validated = validateSettings(newSettings)
+  saveSettings(validated)
+  return validated
 }
 
 /**
@@ -163,11 +156,11 @@ export function updateSetting<K extends keyof EditorSettings>(
  */
 export function resetSettings(): EditorSettings {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY)
   } catch (error) {
-    console.error('Error resetting settings:', error);
+    console.error('Error resetting settings:', error)
   }
-  return DEFAULT_SETTINGS;
+  return DEFAULT_SETTINGS
 }
 
 /**
@@ -175,12 +168,11 @@ export function resetSettings(): EditorSettings {
  */
 export function isLocalStorageAvailable(): boolean {
   try {
-    const test = '__localStorage_test__';
-    localStorage.setItem(test, test);
-    localStorage.removeItem(test);
-    return true;
+    const test = '__localStorage_test__'
+    localStorage.setItem(test, test)
+    localStorage.removeItem(test)
+    return true
   } catch {
-    return false;
+    return false
   }
 }
-

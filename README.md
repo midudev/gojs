@@ -56,4 +56,3 @@ pnpm preview
 ## 📄 Licencia
 
 MIT
-

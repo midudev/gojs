@@ -1,24 +1,24 @@
-import { init } from 'modern-monaco';
-import './style.css';
-import './fonts.css';
-import { INITIAL_CODE } from './consts';
-import { loadSettings, updateSetting, calculateLineHeight } from './storage';
+import { init } from 'modern-monaco'
+import './style.css'
+import './fonts.css'
+import { INITIAL_CODE } from './consts'
+import { loadSettings, updateSetting, calculateLineHeight } from './storage'
 
 // Estado de la aplicación
-let editor: any = null;
-let monaco: any = null;
-let autoRunEnabled = true;
-let debounceTimer: number | null = null;
-let currentDecorations: any[] = []; // Para guardar las decoraciones activas
-const timers: Map<string, number> = new Map(); // Para console.time
-const counters: Map<string, number> = new Map(); // Para console.count
+let editor: any = null
+let monaco: any = null
+let autoRunEnabled = true
+let debounceTimer: number | null = null
+let currentDecorations: any[] = [] // Para guardar las decoraciones activas
+const timers: Map<string, number> = new Map() // Para console.time
+const counters: Map<string, number> = new Map() // Para console.count
 
-let currentSettings = loadSettings();
+let currentSettings = loadSettings()
 
 // Inicializar editor
 async function initEditor() {
-  const editorElement = document.getElementById('editor')!;
-  
+  const editorElement = document.getElementById('editor')!
+
   // Inicializar Monaco con configuración manual
   monaco = await init({
     theme: currentSettings.theme,
@@ -36,12 +36,11 @@ async function initEditor() {
           checkJs: true,
           jsx: 2, // React
           noEmit: true,
-        }
-      }
-    }
-  });
+        },
+      },
+    },
+  })
 
-  
   // Crear instancia del editor
   editor = monaco.editor.create(editorElement, {
     value: INITIAL_CODE,
@@ -51,7 +50,7 @@ async function initEditor() {
     fontSize: currentSettings.fontSize,
     lineHeight: calculateLineHeight(currentSettings.fontSize),
     minimap: {
-      enabled: currentSettings.minimap
+      enabled: currentSettings.minimap,
     },
     lineNumbers: currentSettings.lineNumbers ? 'on' : 'off',
     scrollbar: {
@@ -67,67 +66,63 @@ async function initEditor() {
     autoClosingQuotes: 'always',
     autoIndent: 'full',
     bracketPairColorization: {
-      enabled: true
+      enabled: true,
     },
     smoothScrolling: true,
     cursorBlinking: 'smooth',
     cursorSmoothCaretAnimation: 'on',
     padding: {
       top: 16,
-      bottom: 16
+      bottom: 16,
     },
     readOnly: false, // Asegurar que sea editable
     domReadOnly: false,
-  });
+  })
 
   // Registrar comando para formatear
   editor.addAction({
     id: 'format-document',
     label: 'Formatear Documento',
-    keybindings: [
-      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF,
-    ],
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
     run: async (ed: any) => {
-      await ed.getAction('editor.action.formatDocument')?.run();
+      await ed.getAction('editor.action.formatDocument')?.run()
     },
-  });
+  })
 
   // Registrar comando para ejecutar código
   editor.addAction({
     id: 'run-code',
     label: 'Ejecutar Código',
-    keybindings: [
-      monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
-    ],
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
     run: () => {
-      runCode();
+      runCode()
     },
-  });
+  })
 
-  setupEditorEvents();
-  
+  setupEditorEvents()
+
   // Sincronizar el color de fondo del editor con la consola
-  syncEditorBackground();
+  syncEditorBackground()
 }
 
 // Sincronizar el color de fondo del editor con la consola y header
 function syncEditorBackground() {
-  if (!editor) return;
-  
+  if (!editor) return
+
   try {
     // Obtener el elemento DOM del editor
-    const editorDomNode = editor.getDomNode();
-    if (!editorDomNode) return;
-    
+    const editorDomNode = editor.getDomNode()
+    if (!editorDomNode) return
+
     // Obtener el color de fondo computado
-    const computedStyle = window.getComputedStyle(editorDomNode);
-    const backgroundColor = computedStyle.backgroundColor;
-    
+    const computedStyle = window.getComputedStyle(editorDomNode)
+    const backgroundColor = computedStyle.backgroundColor
+
     // Establecer el color como variable CSS en el root
     // Esto actualiza automáticamente el header, la consola y las tablas
-    document.documentElement.style.setProperty('--editor-background', backgroundColor);
+    document.documentElement.style.setProperty('--editor-background', backgroundColor)
   } catch (error) {
-    console.error('Error al sincronizar el fondo del editor:', error);
+    console.error('Error al sincronizar el fondo del editor:', error)
   }
 }
 
@@ -137,57 +132,57 @@ const themeImports: Record<string, () => Promise<any>> = {
   'vitesse-light': () => import('tm-themes/themes/vitesse-light.json'),
   'github-dark': () => import('tm-themes/themes/github-dark.json'),
   'github-light': () => import('tm-themes/themes/github-light.json'),
-  'dracula': () => import('tm-themes/themes/dracula.json'),
-  'monokai': () => import('tm-themes/themes/monokai.json'),
-  'nord': () => import('tm-themes/themes/nord.json'),
+  dracula: () => import('tm-themes/themes/dracula.json'),
+  monokai: () => import('tm-themes/themes/monokai.json'),
+  nord: () => import('tm-themes/themes/nord.json'),
   'tokyo-night': () => import('tm-themes/themes/tokyo-night.json'),
-};
+}
 
 // Cargar y aplicar un tema dinámicamente desde tm-themes
 async function changeTheme(themeName: string) {
   if (!editor || !monaco) {
-    console.error('Editor not initialized', { editor: !!editor, monaco: !!monaco });
-    return;
+    console.error('Editor not initialized', { editor: !!editor, monaco: !!monaco })
+    return
   }
 
   try {
-    console.log('Loading theme:', themeName);
-    
+    console.log('Loading theme:', themeName)
+
     // Cargar el tema desde el mapa de imports
-    const themeLoader = themeImports[themeName];
+    const themeLoader = themeImports[themeName]
     if (!themeLoader) {
-      throw new Error(`Theme "${themeName}" not found in theme imports`);
+      throw new Error(`Theme "${themeName}" not found in theme imports`)
     }
-    
-    const themeModule = await themeLoader();
-    const themeData = themeModule.default || themeModule;
-    
+
+    const themeModule = await themeLoader()
+    const themeData = themeModule.default || themeModule
+
     // Definir el tema en Monaco
     if (monaco.editor && monaco.editor.defineTheme) {
-      monaco.editor.defineTheme(themeName, themeData);
+      monaco.editor.defineTheme(themeName, themeData)
     } else {
-      console.error('monaco.editor.defineTheme not available');
-      return;
+      console.error('monaco.editor.defineTheme not available')
+      return
     }
-    
+
     // Aplicar el tema
     if (monaco.editor && monaco.editor.setTheme) {
-      monaco.editor.setTheme(themeName);
+      monaco.editor.setTheme(themeName)
     } else {
-      console.error('monaco.editor.setTheme not available');
-      return;
+      console.error('monaco.editor.setTheme not available')
+      return
     }
-    
+
     // Forzar actualización
-    editor.layout();
-    
+    editor.layout()
+
     // Sincronizar background
-    await new Promise(resolve => setTimeout(resolve, 100));
-    syncEditorBackground();
-    
-    console.log('Theme applied successfully:', themeName);
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    syncEditorBackground()
+
+    console.log('Theme applied successfully:', themeName)
   } catch (error) {
-    console.error('Error loading/applying theme:', error, themeName);
+    console.error('Error loading/applying theme:', error, themeName)
   }
 }
 
@@ -196,181 +191,187 @@ function setupEditorEvents() {
   // Escuchar cambios en el contenido del editor para ejecución automática
   if (editor) {
     editor.onDidChangeModelContent(() => {
-      if (!autoRunEnabled) return;
-      
+      if (!autoRunEnabled) return
+
       // Limpiar el timer anterior
       if (debounceTimer !== null) {
-        clearTimeout(debounceTimer);
+        clearTimeout(debounceTimer)
       }
-      
+
       // Crear nuevo timer para ejecutar después del delay
-          debounceTimer = window.setTimeout(() => {
-            runCode();
-          }, currentSettings.debounceDelay);
-    });
+      debounceTimer = window.setTimeout(() => {
+        runCode()
+      }, currentSettings.debounceDelay)
+    })
   }
 }
 
 // Ejecutar código
 function runCode() {
-  if (!editor) return;
-  
-  const code = editor.getValue();
-  const outputElement = document.getElementById('output')!;
-  
-  // Limpiar salida anterior
-  outputElement.innerHTML = '';
+  if (!editor) return
 
-  const addLog = (type: 'log' | 'info' | 'warn' | 'error' | 'time' | 'table' | 'count', lineNumber: number | null, data?: any, columns?: string[]) => {
-    const entry = document.createElement('div');
-    entry.className = `log-entry ${type}`;
-    
-    const typeSpan = document.createElement('span');
-    typeSpan.className = 'log-type';
-    typeSpan.textContent = type;
-    
-    entry.appendChild(typeSpan);
-    
+  const code = editor.getValue()
+  const outputElement = document.getElementById('output')!
+
+  // Limpiar salida anterior
+  outputElement.innerHTML = ''
+
+  const addLog = (
+    type: 'log' | 'info' | 'warn' | 'error' | 'time' | 'table' | 'count',
+    lineNumber: number | null,
+    data?: any,
+    columns?: string[],
+  ) => {
+    const entry = document.createElement('div')
+    entry.className = `log-entry ${type}`
+
+    const typeSpan = document.createElement('span')
+    typeSpan.className = 'log-type'
+    typeSpan.textContent = type
+
+    entry.appendChild(typeSpan)
+
     // Si es una tabla, renderizar de forma especial
     if (type === 'table' && data !== undefined) {
-      const tableElement = createTableElement(data, columns);
-      entry.appendChild(tableElement);
+      const tableElement = createTableElement(data, columns)
+      entry.appendChild(tableElement)
     } else {
-      const contentSpan = document.createElement('span');
-      contentSpan.className = 'log-content';
+      const contentSpan = document.createElement('span')
+      contentSpan.className = 'log-content'
       // Para table, data está en el primer argumento
-      const args = data !== undefined ? [data] : [];
-      contentSpan.textContent = args.map(arg => formatValue(arg)).join(' ');
-      entry.appendChild(contentSpan);
+      const args = data !== undefined ? [data] : []
+      contentSpan.textContent = args.map((arg) => formatValue(arg)).join(' ')
+      entry.appendChild(contentSpan)
     }
-    
+
     // Agregar número de línea si está disponible
     if (lineNumber !== null) {
-      const lineSpan = document.createElement('span');
-      lineSpan.className = 'log-line-number';
-      lineSpan.textContent = `:${lineNumber}`;
-      entry.appendChild(lineSpan);
-      
+      const lineSpan = document.createElement('span')
+      lineSpan.className = 'log-line-number'
+      lineSpan.textContent = `:${lineNumber}`
+      entry.appendChild(lineSpan)
+
       // Agregar eventos de hover para destacar la línea en el editor
       entry.addEventListener('mouseenter', () => {
-        highlightEditorLine(lineNumber);
-      });
-      
+        highlightEditorLine(lineNumber)
+      })
+
       entry.addEventListener('mouseleave', () => {
-        clearEditorHighlight();
-      });
-      
+        clearEditorHighlight()
+      })
+
       // Agregar evento de click para ir a la línea y hacer focus
       entry.addEventListener('click', () => {
-        goToLineInEditor(lineNumber);
-      });
-      
+        goToLineInEditor(lineNumber)
+      })
+
       // Cambiar cursor a pointer para indicar que es clickeable
-      entry.style.cursor = 'pointer';
+      entry.style.cursor = 'pointer'
     }
-    
-    outputElement.appendChild(entry);
-  };
+
+    outputElement.appendChild(entry)
+  }
 
   // Preparar funciones de console personalizadas
   const customConsole = {
     log: (...args: any[]) => {
-      const stack = new Error().stack || '';
-      const lineNumber = extractLineNumber(stack);
-      addLog('log', lineNumber, args.join(' '));
+      const stack = new Error().stack || ''
+      const lineNumber = extractLineNumber(stack)
+      addLog('log', lineNumber, args.join(' '))
     },
     info: (...args: any[]) => {
-      const stack = new Error().stack || '';
-      const lineNumber = extractLineNumber(stack);
-      addLog('info', lineNumber, args.join(' '));
+      const stack = new Error().stack || ''
+      const lineNumber = extractLineNumber(stack)
+      addLog('info', lineNumber, args.join(' '))
     },
     warn: (...args: any[]) => {
-      const stack = new Error().stack || '';
-      const lineNumber = extractLineNumber(stack);
-      addLog('warn', lineNumber, args.join(' '));
+      const stack = new Error().stack || ''
+      const lineNumber = extractLineNumber(stack)
+      addLog('warn', lineNumber, args.join(' '))
     },
     error: (...args: any[]) => {
-      const stack = new Error().stack || '';
-      const lineNumber = extractLineNumber(stack);
-      addLog('error', lineNumber, args.join(' '));
+      const stack = new Error().stack || ''
+      const lineNumber = extractLineNumber(stack)
+      addLog('error', lineNumber, args.join(' '))
     },
     time: (label: string = 'default') => {
-      timers.set(label, performance.now());
+      timers.set(label, performance.now())
     },
     timeEnd: (label: string = 'default') => {
-      const startTime = timers.get(label);
+      const startTime = timers.get(label)
       if (startTime === undefined) {
-        addLog('warn', null, `Timer '${label}' does not exist`);
-        return;
+        addLog('warn', null, `Timer '${label}' does not exist`)
+        return
       }
-      const duration = performance.now() - startTime;
-      timers.delete(label);
-      
-      const stack = new Error().stack || '';
-      const lineNumber = extractLineNumber(stack);
-      addLog('time', lineNumber, `${label}: ${duration.toFixed(3)}ms`);
+      const duration = performance.now() - startTime
+      timers.delete(label)
+
+      const stack = new Error().stack || ''
+      const lineNumber = extractLineNumber(stack)
+      addLog('time', lineNumber, `${label}: ${duration.toFixed(3)}ms`)
     },
     table: (data: any, columns?: string[]) => {
-      const stack = new Error().stack || '';
-      const lineNumber = extractLineNumber(stack);
-      addLog('table', lineNumber, data, columns);
+      const stack = new Error().stack || ''
+      const lineNumber = extractLineNumber(stack)
+      addLog('table', lineNumber, data, columns)
     },
     count: (label: string = 'default') => {
-      const currentCount = counters.get(label) || 0;
-      const newCount = currentCount + 1;
-      counters.set(label, newCount);
-      
-      const stack = new Error().stack || '';
-      const lineNumber = extractLineNumber(stack);
-      addLog('count', lineNumber, `${label}: ${newCount}`);
+      const currentCount = counters.get(label) || 0
+      const newCount = currentCount + 1
+      counters.set(label, newCount)
+
+      const stack = new Error().stack || ''
+      const lineNumber = extractLineNumber(stack)
+      addLog('count', lineNumber, `${label}: ${newCount}`)
     },
     countReset: (label: string = 'default') => {
-      counters.delete(label);
-    }
-  };
+      counters.delete(label)
+    },
+  }
 
   // Función auxiliar para extraer número de línea
   function extractLineNumber(stack: string): number | null {
-    const lines = stack.split('\n');
-    
+    const lines = stack.split('\n')
+
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      
+      const line = lines[i]
+
       // Buscar patrones comunes de stack trace
       // Chrome/V8: "at eval (eval at <anonymous>, <anonymous>:4:1)"
       // Firefox: "@eval line 4 > eval:4:1"
-      const chromeMatch = line.match(/<anonymous>:(\d+):\d+\)?$/);
-      const firefoxMatch = line.match(/eval:(\d+):\d+/);
-      
-      const match = chromeMatch || firefoxMatch;
-      
-      if (match && i > 0) { // Ignorar la primera línea (es el Error() mismo)
+      const chromeMatch = line.match(/<anonymous>:(\d+):\d+\)?$/)
+      const firefoxMatch = line.match(/eval:(\d+):\d+/)
+
+      const match = chromeMatch || firefoxMatch
+
+      if (match && i > 0) {
+        // Ignorar la primera línea (es el Error() mismo)
         // AsyncFunction añade 2 líneas al inicio (wrapper de la función)
         // Restar ese offset para obtener el número de línea real del código
-        const lineNum = parseInt(match[1], 10) - 2;
-        return lineNum > 0 ? lineNum : null;
+        const lineNum = parseInt(match[1], 10) - 2
+        return lineNum > 0 ? lineNum : null
       }
     }
-    
-    return null;
+
+    return null
   }
 
   try {
     // Ejecutar código en un contexto aislado con console personalizado
-    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-    const fn = new AsyncFunction('console', code);
-    
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+    const fn = new AsyncFunction('console', code)
+
     // Ejecutar y manejar promesas, pasando el console personalizado
     Promise.resolve(fn(customConsole)).catch((error) => {
-      addLog('error', null, `Error: ${error.message}`);
+      addLog('error', null, `Error: ${error.message}`)
       if (error.stack) {
-        addLog('error', null, error.stack);
+        addLog('error', null, error.stack)
       }
-    });
+    })
   } catch (error: any) {
-    addLog('error', null, `Error de sintaxis: ${error.message}`);
+    addLog('error', null, `Error de sintaxis: ${error.message}`)
     if (error.stack) {
-      addLog('error', null, error.stack);
+      addLog('error', null, error.stack)
     }
   }
 }
@@ -378,146 +379,146 @@ function runCode() {
 // Formatear valores para mostrar en consola
 function formatValue(value: any): string {
   if (value === null) {
-    return 'null';
+    return 'null'
   }
   if (value === undefined) {
-    return 'undefined';
+    return 'undefined'
   }
   if (typeof value === 'string') {
-    return value;
+    return value
   }
   if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
+    return String(value)
   }
   if (typeof value === 'object') {
     try {
-      return JSON.stringify(value, null, 2);
+      return JSON.stringify(value, null, 2)
     } catch {
-      return String(value);
+      return String(value)
     }
   }
-  return String(value);
+  return String(value)
 }
 
 // Crear elemento de tabla HTML para console.table
 function createTableElement(data: any, columns?: string[]): HTMLElement {
-  const tableContainer = document.createElement('div');
-  tableContainer.className = 'console-table-container';
-  
+  const tableContainer = document.createElement('div')
+  tableContainer.className = 'console-table-container'
+
   // Si no es un objeto o array, mostrar como texto
   if (!data || typeof data !== 'object') {
-    tableContainer.textContent = String(data);
-    return tableContainer;
+    tableContainer.textContent = String(data)
+    return tableContainer
   }
-  
-  const table = document.createElement('table');
-  table.className = 'console-table';
-  
+
+  const table = document.createElement('table')
+  table.className = 'console-table'
+
   // Convertir data a array de entries si es necesario
-  let entries: [string | number, any][];
-  
+  let entries: [string | number, any][]
+
   if (Array.isArray(data)) {
-    entries = data.map((item, index) => [index, item]);
+    entries = data.map((item, index) => [index, item])
   } else {
-    entries = Object.entries(data);
+    entries = Object.entries(data)
   }
-  
+
   if (entries.length === 0) {
-    tableContainer.textContent = '(empty)';
-    return tableContainer;
+    tableContainer.textContent = '(empty)'
+    return tableContainer
   }
-  
+
   // Determinar las columnas
-  let allKeys = new Set<string>();
+  let allKeys = new Set<string>()
   entries.forEach(([_, value]) => {
     if (value && typeof value === 'object') {
-      Object.keys(value).forEach(key => allKeys.add(key));
+      Object.keys(value).forEach((key) => allKeys.add(key))
     }
-  });
-  
-  const keysToShow = columns || Array.from(allKeys);
-  const hasSubProperties = keysToShow.length > 0;
-  
+  })
+
+  const keysToShow = columns || Array.from(allKeys)
+  const hasSubProperties = keysToShow.length > 0
+
   // Crear header
-  const thead = document.createElement('thead');
-  const headerRow = document.createElement('tr');
-  
+  const thead = document.createElement('thead')
+  const headerRow = document.createElement('tr')
+
   // Columna de índice
-  const indexHeader = document.createElement('th');
-  indexHeader.textContent = '(index)';
-  headerRow.appendChild(indexHeader);
-  
+  const indexHeader = document.createElement('th')
+  indexHeader.textContent = '(index)'
+  headerRow.appendChild(indexHeader)
+
   // Columnas de propiedades o columna "Value"
   if (hasSubProperties) {
-    keysToShow.forEach(key => {
-      const th = document.createElement('th');
-      th.textContent = key;
-      headerRow.appendChild(th);
-    });
+    keysToShow.forEach((key) => {
+      const th = document.createElement('th')
+      th.textContent = key
+      headerRow.appendChild(th)
+    })
   } else {
-    const valueHeader = document.createElement('th');
-    valueHeader.textContent = 'Value';
-    headerRow.appendChild(valueHeader);
+    const valueHeader = document.createElement('th')
+    valueHeader.textContent = 'Value'
+    headerRow.appendChild(valueHeader)
   }
-  
-  thead.appendChild(headerRow);
-  table.appendChild(thead);
-  
+
+  thead.appendChild(headerRow)
+  table.appendChild(thead)
+
   // Crear body
-  const tbody = document.createElement('tbody');
-  
+  const tbody = document.createElement('tbody')
+
   entries.forEach(([index, value]) => {
-    const row = document.createElement('tr');
-    
+    const row = document.createElement('tr')
+
     // Celda de índice
-    const indexCell = document.createElement('td');
-    indexCell.className = 'table-index';
-    indexCell.textContent = String(index);
-    row.appendChild(indexCell);
-    
+    const indexCell = document.createElement('td')
+    indexCell.className = 'table-index'
+    indexCell.textContent = String(index)
+    row.appendChild(indexCell)
+
     // Celdas de datos
     if (hasSubProperties && value && typeof value === 'object') {
-      keysToShow.forEach(key => {
-        const td = document.createElement('td');
-        const cellValue = (value as any)[key];
-        td.textContent = formatCellValue(cellValue);
-        row.appendChild(td);
-      });
+      keysToShow.forEach((key) => {
+        const td = document.createElement('td')
+        const cellValue = (value as any)[key]
+        td.textContent = formatCellValue(cellValue)
+        row.appendChild(td)
+      })
     } else {
-      const td = document.createElement('td');
-      td.textContent = formatCellValue(value);
-      row.appendChild(td);
+      const td = document.createElement('td')
+      td.textContent = formatCellValue(value)
+      row.appendChild(td)
     }
-    
-    tbody.appendChild(row);
-  });
-  
-  table.appendChild(tbody);
-  tableContainer.appendChild(table);
-  
-  return tableContainer;
+
+    tbody.appendChild(row)
+  })
+
+  table.appendChild(tbody)
+  tableContainer.appendChild(table)
+
+  return tableContainer
 }
 
 // Formatear valor de celda de tabla
 function formatCellValue(value: any): string {
-  if (value === null) return 'null';
-  if (value === undefined) return 'undefined';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value === null) return 'null'
+  if (value === undefined) return 'undefined'
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   if (typeof value === 'object') {
     try {
-      return JSON.stringify(value);
+      return JSON.stringify(value)
     } catch {
-      return String(value);
+      return String(value)
     }
   }
-  return String(value);
+  return String(value)
 }
 
 // Destacar línea en el editor
 function highlightEditorLine(lineNumber: number) {
-  if (!editor || !monaco) return;
-  
+  if (!editor || !monaco) return
+
   // Limpiar decoraciones anteriores
   currentDecorations = editor.deltaDecorations(currentDecorations, [
     {
@@ -525,251 +526,249 @@ function highlightEditorLine(lineNumber: number) {
       options: {
         isWholeLine: true,
         className: 'line-highlight',
-        glyphMarginClassName: 'line-highlight-glyph'
-      }
-    }
-  ]);
-  
+        glyphMarginClassName: 'line-highlight-glyph',
+      },
+    },
+  ])
+
   // Hacer scroll suave a la línea
-  editor.revealLineInCenter(lineNumber, 0); // 0 = smooth scroll
+  editor.revealLineInCenter(lineNumber, 0) // 0 = smooth scroll
 }
 
 // Ir a la línea en el editor y hacer focus
 function goToLineInEditor(lineNumber: number) {
-  if (!editor || !monaco) return;
-  
+  if (!editor || !monaco) return
+
   // Hacer focus en el editor
-  editor.focus();
-  
+  editor.focus()
+
   // Posicionar el cursor al inicio de la línea
   editor.setPosition({
     lineNumber: lineNumber,
-    column: 1
-  });
-  
+    column: 1,
+  })
+
   // Centrar la línea en el viewport
-  editor.revealLineInCenter(lineNumber, 0);
-  
+  editor.revealLineInCenter(lineNumber, 0)
+
   // Destacar la línea temporalmente
-  highlightEditorLine(lineNumber);
-  
+  highlightEditorLine(lineNumber)
+
   // Quitar el highlight después de 2 segundos
   setTimeout(() => {
-    clearEditorHighlight();
-  }, 2000);
+    clearEditorHighlight()
+  }, 2000)
 }
 
 // Limpiar highlight del editor
 function clearEditorHighlight() {
-  if (!editor) return;
-  currentDecorations = editor.deltaDecorations(currentDecorations, []);
+  if (!editor) return
+  currentDecorations = editor.deltaDecorations(currentDecorations, [])
 }
-
 
 // Configurar resize del panel divisor
 function setupResizer() {
-  const divider = document.getElementById('divider')!;
-  const editorPanel = document.querySelector('.editor-panel') as HTMLElement;
-  const outputPanel = document.querySelector('.output-panel') as HTMLElement;
-  
-  let isResizing = false;
-  let startX = 0;
-  let startWidthEditor = 0;
-  let startWidthOutput = 0;
+  const divider = document.getElementById('divider')!
+  const editorPanel = document.querySelector('.editor-panel') as HTMLElement
+  const outputPanel = document.querySelector('.output-panel') as HTMLElement
+
+  let isResizing = false
+  let startX = 0
+  let startWidthEditor = 0
+  let startWidthOutput = 0
 
   divider.addEventListener('mousedown', (e) => {
-    isResizing = true;
-    startX = e.clientX;
-    startWidthEditor = editorPanel.offsetWidth;
-    startWidthOutput = outputPanel.offsetWidth;
-    
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  });
+    isResizing = true
+    startX = e.clientX
+    startWidthEditor = editorPanel.offsetWidth
+    startWidthOutput = outputPanel.offsetWidth
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  })
 
   document.addEventListener('mousemove', (e) => {
-    if (!isResizing) return;
+    if (!isResizing) return
 
-    const delta = e.clientX - startX;
-    const newEditorWidth = startWidthEditor + delta;
-    const newOutputWidth = startWidthOutput - delta;
+    const delta = e.clientX - startX
+    const newEditorWidth = startWidthEditor + delta
+    const newOutputWidth = startWidthOutput - delta
 
     // Límites mínimos
-    if (newEditorWidth < 300 || newOutputWidth < 300) return;
+    if (newEditorWidth < 300 || newOutputWidth < 300) return
 
-    editorPanel.style.flex = `0 0 ${newEditorWidth}px`;
-    outputPanel.style.flex = `0 0 ${newOutputWidth}px`;
-  });
+    editorPanel.style.flex = `0 0 ${newEditorWidth}px`
+    outputPanel.style.flex = `0 0 ${newOutputWidth}px`
+  })
 
   document.addEventListener('mouseup', () => {
     if (isResizing) {
-      isResizing = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      isResizing = false
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
     }
-  });
+  })
 }
 
 // Inicializar aplicación
 async function start() {
-  await initEditor();
-  setupResizer();
+  await initEditor()
+  setupResizer()
 
   // Event listener para el botón de auto-run toggle
-  const autorunToggleButton = document.getElementById('autorun-toggle-button');
-  const pauseIcon = document.getElementById('pause-icon');
-  const playIcon = document.getElementById('play-icon');
-  
+  const autorunToggleButton = document.getElementById('autorun-toggle-button')
+  const pauseIcon = document.getElementById('pause-icon')
+  const playIcon = document.getElementById('play-icon')
+
   if (autorunToggleButton && pauseIcon && playIcon) {
     autorunToggleButton.addEventListener('click', () => {
-      autoRunEnabled = !autoRunEnabled;
-      
+      autoRunEnabled = !autoRunEnabled
+
       // Alternar los iconos
       if (autoRunEnabled) {
-        pauseIcon.style.display = 'block';
-        playIcon.style.display = 'none';
-        autorunToggleButton.title = 'Auto-ejecutar activado (click para desactivar)';
+        pauseIcon.style.display = 'block'
+        playIcon.style.display = 'none'
+        autorunToggleButton.title = 'Auto-ejecutar activado (click para desactivar)'
         // Ejecutar el código cuando se activa
-        runCode();
+        runCode()
       } else {
-        pauseIcon.style.display = 'none';
-        playIcon.style.display = 'block';
-        autorunToggleButton.title = 'Auto-ejecutar desactivado (click para activar)';
+        pauseIcon.style.display = 'none'
+        playIcon.style.display = 'block'
+        autorunToggleButton.title = 'Auto-ejecutar desactivado (click para activar)'
       }
-    });
+    })
   }
 
   // Event listener para el botón de settings
-  const settingsButton = document.getElementById('settings-button');
-  const settingsModal = document.getElementById('settings-modal');
-  const closeSettings = document.getElementById('close-settings');
-  const modalOverlay = settingsModal?.querySelector('.modal-overlay');
+  const settingsButton = document.getElementById('settings-button')
+  const settingsModal = document.getElementById('settings-modal')
+  const closeSettings = document.getElementById('close-settings')
+  const modalOverlay = settingsModal?.querySelector('.modal-overlay')
 
   if (settingsButton && settingsModal) {
     settingsButton.addEventListener('click', () => {
-      settingsModal.style.display = 'flex';
-    });
+      settingsModal.style.display = 'flex'
+    })
 
     const closeModal = () => {
       if (settingsModal) {
-        settingsModal.style.display = 'none';
+        settingsModal.style.display = 'none'
       }
-    };
+    }
 
-    closeSettings?.addEventListener('click', closeModal);
-    modalOverlay?.addEventListener('click', closeModal);
+    closeSettings?.addEventListener('click', closeModal)
+    modalOverlay?.addEventListener('click', closeModal)
 
     // Escape key to close
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && settingsModal.style.display === 'flex') {
-        closeModal();
+        closeModal()
       }
-    });
+    })
 
     // Settings tabs
-    const tabs = document.querySelectorAll('.settings-tab');
-    const panels = document.querySelectorAll('.settings-panel');
+    const tabs = document.querySelectorAll('.settings-tab')
+    const panels = document.querySelectorAll('.settings-panel')
 
-    tabs.forEach(tab => {
+    tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
-        const targetPanel = tab.getAttribute('data-tab');
+        const targetPanel = tab.getAttribute('data-tab')
 
         // Update active tab
-        tabs.forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
+        tabs.forEach((t) => t.classList.remove('active'))
+        tab.classList.add('active')
 
         // Update active panel
-        panels.forEach(p => p.classList.remove('active'));
-        const panel = document.querySelector(`[data-panel="${targetPanel}"]`);
-        panel?.classList.add('active');
-      });
-    });
+        panels.forEach((p) => p.classList.remove('active'))
+        const panel = document.querySelector(`[data-panel="${targetPanel}"]`)
+        panel?.classList.add('active')
+      })
+    })
 
     // Cargar valores actuales en el formulario
-    const themeSelect = document.getElementById('setting-theme') as HTMLSelectElement;
-    const fontFamilySelect = document.getElementById('setting-font-family') as HTMLSelectElement;
-    const fontSizeInput = document.getElementById('setting-font-size') as HTMLInputElement;
-    const minimapCheck = document.getElementById('setting-minimap') as HTMLInputElement;
-    const lineNumbersCheck = document.getElementById('setting-line-numbers') as HTMLInputElement;
-    const debounceInput = document.getElementById('setting-debounce') as HTMLInputElement;
-    const formatPasteCheck = document.getElementById('setting-format-on-paste') as HTMLInputElement;
-    const formatTypeCheck = document.getElementById('setting-format-on-type') as HTMLInputElement;
+    const themeSelect = document.getElementById('setting-theme') as HTMLSelectElement
+    const fontFamilySelect = document.getElementById('setting-font-family') as HTMLSelectElement
+    const fontSizeInput = document.getElementById('setting-font-size') as HTMLInputElement
+    const minimapCheck = document.getElementById('setting-minimap') as HTMLInputElement
+    const lineNumbersCheck = document.getElementById('setting-line-numbers') as HTMLInputElement
+    const debounceInput = document.getElementById('setting-debounce') as HTMLInputElement
+    const formatPasteCheck = document.getElementById('setting-format-on-paste') as HTMLInputElement
+    const formatTypeCheck = document.getElementById('setting-format-on-type') as HTMLInputElement
 
     // Sincronizar UI con settings actuales
-    if (themeSelect) themeSelect.value = currentSettings.theme;
-    if (fontFamilySelect) fontFamilySelect.value = currentSettings.fontFamily;
-    if (fontSizeInput) fontSizeInput.value = String(currentSettings.fontSize);
-    if (minimapCheck) minimapCheck.checked = currentSettings.minimap;
-    if (lineNumbersCheck) lineNumbersCheck.checked = currentSettings.lineNumbers;
-    if (debounceInput) debounceInput.value = String(currentSettings.debounceDelay);
-    if (formatPasteCheck) formatPasteCheck.checked = currentSettings.formatOnPaste;
-    if (formatTypeCheck) formatTypeCheck.checked = currentSettings.formatOnType;
+    if (themeSelect) themeSelect.value = currentSettings.theme
+    if (fontFamilySelect) fontFamilySelect.value = currentSettings.fontFamily
+    if (fontSizeInput) fontSizeInput.value = String(currentSettings.fontSize)
+    if (minimapCheck) minimapCheck.checked = currentSettings.minimap
+    if (lineNumbersCheck) lineNumbersCheck.checked = currentSettings.lineNumbers
+    if (debounceInput) debounceInput.value = String(currentSettings.debounceDelay)
+    if (formatPasteCheck) formatPasteCheck.checked = currentSettings.formatOnPaste
+    if (formatTypeCheck) formatTypeCheck.checked = currentSettings.formatOnType
 
     // Event listeners para cambios en settings
     themeSelect?.addEventListener('change', async (e) => {
-      const theme = (e.target as HTMLSelectElement).value;
-      currentSettings = updateSetting(currentSettings, 'theme', theme as any);
-      await changeTheme(theme);
-    });
+      const theme = (e.target as HTMLSelectElement).value
+      currentSettings = updateSetting(currentSettings, 'theme', theme as any)
+      await changeTheme(theme)
+    })
 
     fontFamilySelect?.addEventListener('change', (e) => {
-      const fontFamily = (e.target as HTMLSelectElement).value;
-      currentSettings = updateSetting(currentSettings, 'fontFamily', fontFamily as any);
-      editor?.updateOptions({ 
-        fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`
-      });
-    });
+      const fontFamily = (e.target as HTMLSelectElement).value
+      currentSettings = updateSetting(currentSettings, 'fontFamily', fontFamily as any)
+      editor?.updateOptions({
+        fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`,
+      })
+    })
 
     fontSizeInput?.addEventListener('input', (e) => {
-      const size = parseInt((e.target as HTMLInputElement).value, 10);
-      currentSettings = updateSetting(currentSettings, 'fontSize', size);
-      const lineHeight = calculateLineHeight(currentSettings.fontSize);
-      editor?.updateOptions({ 
+      const size = parseInt((e.target as HTMLInputElement).value, 10)
+      currentSettings = updateSetting(currentSettings, 'fontSize', size)
+      const lineHeight = calculateLineHeight(currentSettings.fontSize)
+      editor?.updateOptions({
         fontSize: currentSettings.fontSize,
-        lineHeight: lineHeight
-      });
-    });
+        lineHeight: lineHeight,
+      })
+    })
 
     minimapCheck?.addEventListener('change', (e) => {
-      const enabled = (e.target as HTMLInputElement).checked;
-      currentSettings = updateSetting(currentSettings, 'minimap', enabled);
-      editor?.updateOptions({ minimap: { enabled: currentSettings.minimap } });
-    });
+      const enabled = (e.target as HTMLInputElement).checked
+      currentSettings = updateSetting(currentSettings, 'minimap', enabled)
+      editor?.updateOptions({ minimap: { enabled: currentSettings.minimap } })
+    })
 
     lineNumbersCheck?.addEventListener('change', (e) => {
-      const enabled = (e.target as HTMLInputElement).checked;
-      currentSettings = updateSetting(currentSettings, 'lineNumbers', enabled);
-      editor?.updateOptions({ lineNumbers: currentSettings.lineNumbers ? 'on' : 'off' });
-    });
+      const enabled = (e.target as HTMLInputElement).checked
+      currentSettings = updateSetting(currentSettings, 'lineNumbers', enabled)
+      editor?.updateOptions({ lineNumbers: currentSettings.lineNumbers ? 'on' : 'off' })
+    })
 
     debounceInput?.addEventListener('input', (e) => {
-      const delay = parseInt((e.target as HTMLInputElement).value, 10);
-      currentSettings = updateSetting(currentSettings, 'debounceDelay', delay);
-    });
+      const delay = parseInt((e.target as HTMLInputElement).value, 10)
+      currentSettings = updateSetting(currentSettings, 'debounceDelay', delay)
+    })
 
     formatPasteCheck?.addEventListener('change', (e) => {
-      const enabled = (e.target as HTMLInputElement).checked;
-      currentSettings = updateSetting(currentSettings, 'formatOnPaste', enabled);
-      editor?.updateOptions({ formatOnPaste: currentSettings.formatOnPaste });
-    });
+      const enabled = (e.target as HTMLInputElement).checked
+      currentSettings = updateSetting(currentSettings, 'formatOnPaste', enabled)
+      editor?.updateOptions({ formatOnPaste: currentSettings.formatOnPaste })
+    })
 
     formatTypeCheck?.addEventListener('change', (e) => {
-      const enabled = (e.target as HTMLInputElement).checked;
-      currentSettings = updateSetting(currentSettings, 'formatOnType', enabled);
-      editor?.updateOptions({ formatOnType: currentSettings.formatOnType });
-    });
+      const enabled = (e.target as HTMLInputElement).checked
+      currentSettings = updateSetting(currentSettings, 'formatOnType', enabled)
+      editor?.updateOptions({ formatOnType: currentSettings.formatOnType })
+    })
   }
 
   // Ejecutar código inicial si auto-run está habilitado
   if (autoRunEnabled) {
-    runCode();
+    runCode()
   }
 }
 
 // Iniciar cuando el DOM esté listo
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', start);
+  document.addEventListener('DOMContentLoaded', start)
 } else {
-  start();
+  start()
 }
-

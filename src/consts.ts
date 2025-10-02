@@ -53,5 +53,4 @@ console.count('clicks');
 console.count('clicks');
 console.count('clicks');
 console.count(); // usa 'default' como label
-`;
-
+`
