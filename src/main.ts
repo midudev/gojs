@@ -3,6 +3,7 @@ import './style.css'
 import './fonts.css'
 import { INITIAL_CODE } from './consts'
 import { loadSettings, updateSetting, calculateLineHeight } from './storage'
+import { initPrettierWorker, formatCode } from './prettier'
 
 // Estado de la aplicación
 let editor: any = null
@@ -84,8 +85,8 @@ async function initEditor() {
     id: 'format-document',
     label: 'Formatear Documento',
     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
-    run: async (ed: any) => {
-      await ed.getAction('editor.action.formatDocument')?.run()
+    run: async () => {
+      await formatEditorCode()
     },
   })
 
@@ -257,9 +258,39 @@ function setupEditorEvents() {
   }
 }
 
-// Ejecutar código
-function runCode() {
+// Formatear código del editor con Prettier
+async function formatEditorCode() {
   if (!editor) return
+
+  try {
+    const code = editor.getValue()
+    const formatted = await formatCode(code, currentSettings.prettier)
+
+    if (formatted !== code) {
+      // Guardar posición del cursor
+      const position = editor.getPosition()
+
+      // Actualizar el código
+      editor.setValue(formatted)
+
+      // Restaurar posición del cursor (aproximada)
+      if (position) {
+        editor.setPosition(position)
+      }
+    }
+  } catch (error) {
+    console.error('Error formatting code:', error)
+  }
+}
+
+// Ejecutar código
+async function runCode() {
+  if (!editor) return
+
+  // Si auto-format está activado, formatear antes de ejecutar
+  if (currentSettings.prettier.autoFormat) {
+    await formatEditorCode()
+  }
 
   const code = editor.getValue()
   const outputElement = document.getElementById('output')!
@@ -724,6 +755,9 @@ function setupResizer() {
 
 // Inicializar aplicación
 async function start() {
+  // Inicializar Prettier worker
+  initPrettierWorker()
+
   await initEditor()
   setupResizer()
 
@@ -747,6 +781,31 @@ async function start() {
         pauseIcon.style.display = 'none'
         playIcon.style.display = 'block'
         autorunToggleButton.title = 'Auto-ejecutar desactivado (click para activar)'
+      }
+    })
+  }
+
+  // Event listener para el botón de IA toggle
+  const aiToggleButton = document.getElementById('ai-toggle-button')
+  const robotIcon = document.getElementById('robot-icon')
+  const robotOffIcon = document.getElementById('robot-off-icon')
+  let aiEnabled = false
+
+  if (aiToggleButton && robotIcon && robotOffIcon) {
+    aiToggleButton.addEventListener('click', () => {
+      aiEnabled = !aiEnabled
+
+      // Alternar los iconos
+      if (aiEnabled) {
+        robotIcon.style.display = 'block'
+        robotOffIcon.style.display = 'none'
+        aiToggleButton.title = 'IA activada (click para desactivar)'
+        // Aquí irá la lógica para activar la IA
+      } else {
+        robotIcon.style.display = 'none'
+        robotOffIcon.style.display = 'block'
+        aiToggleButton.title = 'IA desactivada (click para activar)'
+        // Aquí irá la lógica para desactivar la IA
       }
     })
   }
@@ -869,6 +928,91 @@ async function start() {
       const enabled = (e.target as HTMLInputElement).checked
       currentSettings = updateSetting(currentSettings, 'formatOnType', enabled)
       editor?.updateOptions({ formatOnType: currentSettings.formatOnType })
+    })
+
+    // Settings de Formatting (Prettier)
+    const autoFormatCheck = document.getElementById('setting-auto-format') as HTMLInputElement
+    const printWidthInput = document.getElementById('setting-print-width') as HTMLInputElement
+    const tabWidthInput = document.getElementById('setting-tab-width') as HTMLInputElement
+    const semiCheck = document.getElementById('setting-semi') as HTMLInputElement
+    const singleQuoteCheck = document.getElementById('setting-single-quote') as HTMLInputElement
+    const quotePropsSelect = document.getElementById('setting-quote-props') as HTMLSelectElement
+    const jsxSingleQuoteCheck = document.getElementById('setting-jsx-single-quote') as HTMLInputElement
+    const trailingCommaSelect = document.getElementById('setting-trailing-comma') as HTMLSelectElement
+    const bracketSpacingCheck = document.getElementById('setting-bracket-spacing') as HTMLInputElement
+    const arrowParensSelect = document.getElementById('setting-arrow-parens') as HTMLSelectElement
+
+    // Sincronizar UI con settings de Prettier
+    if (autoFormatCheck) autoFormatCheck.checked = currentSettings.prettier.autoFormat
+    if (printWidthInput) printWidthInput.value = String(currentSettings.prettier.printWidth)
+    if (tabWidthInput) tabWidthInput.value = String(currentSettings.prettier.tabWidth)
+    if (semiCheck) semiCheck.checked = currentSettings.prettier.semi
+    if (singleQuoteCheck) singleQuoteCheck.checked = currentSettings.prettier.singleQuote
+    if (quotePropsSelect) quotePropsSelect.value = currentSettings.prettier.quoteProps
+    if (jsxSingleQuoteCheck) jsxSingleQuoteCheck.checked = currentSettings.prettier.jsxSingleQuote
+    if (trailingCommaSelect) trailingCommaSelect.value = currentSettings.prettier.trailingComma
+    if (bracketSpacingCheck) bracketSpacingCheck.checked = currentSettings.prettier.bracketSpacing
+    if (arrowParensSelect) arrowParensSelect.value = currentSettings.prettier.arrowParens
+
+    // Event listeners para cambios en Prettier settings
+    autoFormatCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      const newPrettier = { ...currentSettings.prettier, autoFormat: enabled }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
+    })
+
+    printWidthInput?.addEventListener('input', (e) => {
+      const value = parseInt((e.target as HTMLInputElement).value, 10)
+      const newPrettier = { ...currentSettings.prettier, printWidth: value }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
+    })
+
+    tabWidthInput?.addEventListener('input', (e) => {
+      const value = parseInt((e.target as HTMLInputElement).value, 10)
+      const newPrettier = { ...currentSettings.prettier, tabWidth: value }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
+    })
+
+    semiCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      const newPrettier = { ...currentSettings.prettier, semi: enabled }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
+    })
+
+    singleQuoteCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      const newPrettier = { ...currentSettings.prettier, singleQuote: enabled }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
+    })
+
+    quotePropsSelect?.addEventListener('change', (e) => {
+      const value = (e.target as HTMLSelectElement).value as 'as-needed' | 'consistent' | 'preserve'
+      const newPrettier = { ...currentSettings.prettier, quoteProps: value }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
+    })
+
+    jsxSingleQuoteCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      const newPrettier = { ...currentSettings.prettier, jsxSingleQuote: enabled }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
+    })
+
+    trailingCommaSelect?.addEventListener('change', (e) => {
+      const value = (e.target as HTMLSelectElement).value as 'none' | 'es5' | 'all'
+      const newPrettier = { ...currentSettings.prettier, trailingComma: value }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
+    })
+
+    bracketSpacingCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      const newPrettier = { ...currentSettings.prettier, bracketSpacing: enabled }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
+    })
+
+    arrowParensSelect?.addEventListener('change', (e) => {
+      const value = (e.target as HTMLSelectElement).value as 'always' | 'avoid'
+      const newPrettier = { ...currentSettings.prettier, arrowParens: value }
+      currentSettings = updateSetting(currentSettings, 'prettier', newPrettier)
     })
   }
 
