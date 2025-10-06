@@ -22,6 +22,19 @@ export const AVAILABLE_FONTS = ['JetBrains Mono', 'Cascadia Code'] as const
 
 export type FontFamily = (typeof AVAILABLE_FONTS)[number]
 
+export interface PrettierSettings {
+  autoFormat: boolean
+  printWidth: number
+  tabWidth: number
+  semi: boolean
+  singleQuote: boolean
+  quoteProps: 'as-needed' | 'consistent' | 'preserve'
+  jsxSingleQuote: boolean
+  trailingComma: 'none' | 'es5' | 'all'
+  bracketSpacing: boolean
+  arrowParens: 'always' | 'avoid'
+}
+
 export interface EditorSettings {
   theme: Theme
   fontSize: number
@@ -31,6 +44,7 @@ export interface EditorSettings {
   debounceDelay: number
   formatOnPaste: boolean
   formatOnType: boolean
+  prettier: PrettierSettings
 }
 
 export const DEFAULT_SETTINGS: EditorSettings = {
@@ -42,6 +56,18 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   debounceDelay: 800,
   formatOnPaste: true,
   formatOnType: true,
+  prettier: {
+    autoFormat: false,
+    printWidth: 80,
+    tabWidth: 2,
+    semi: true,
+    singleQuote: false,
+    quoteProps: 'as-needed',
+    jsxSingleQuote: false,
+    trailingComma: 'es5',
+    bracketSpacing: true,
+    arrowParens: 'always',
+  },
 }
 
 /**
@@ -90,6 +116,7 @@ function isValidFont(font: string): font is FontFamily {
  * Valida y normaliza las configuraciones cargadas
  */
 function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
+  const prettierSettings: Partial<PrettierSettings> = settings.prettier || ({} as Partial<PrettierSettings>)
   return {
     theme: settings.theme && isValidTheme(settings.theme) ? settings.theme : DEFAULT_SETTINGS.theme,
     fontSize: validateNumber(settings.fontSize, 10, 30, DEFAULT_SETTINGS.fontSize),
@@ -100,6 +127,27 @@ function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
     debounceDelay: validateNumber(settings.debounceDelay, 100, 5000, DEFAULT_SETTINGS.debounceDelay),
     formatOnPaste: validateBoolean(settings.formatOnPaste, DEFAULT_SETTINGS.formatOnPaste),
     formatOnType: validateBoolean(settings.formatOnType, DEFAULT_SETTINGS.formatOnType),
+    prettier: {
+      autoFormat: validateBoolean(prettierSettings.autoFormat, DEFAULT_SETTINGS.prettier.autoFormat),
+      printWidth: validateNumber(prettierSettings.printWidth, 40, 200, DEFAULT_SETTINGS.prettier.printWidth),
+      tabWidth: validateNumber(prettierSettings.tabWidth, 1, 8, DEFAULT_SETTINGS.prettier.tabWidth),
+      semi: validateBoolean(prettierSettings.semi, DEFAULT_SETTINGS.prettier.semi),
+      singleQuote: validateBoolean(prettierSettings.singleQuote, DEFAULT_SETTINGS.prettier.singleQuote),
+      quoteProps:
+        prettierSettings.quoteProps && ['as-needed', 'consistent', 'preserve'].includes(prettierSettings.quoteProps)
+          ? prettierSettings.quoteProps
+          : DEFAULT_SETTINGS.prettier.quoteProps,
+      jsxSingleQuote: validateBoolean(prettierSettings.jsxSingleQuote, DEFAULT_SETTINGS.prettier.jsxSingleQuote),
+      trailingComma:
+        prettierSettings.trailingComma && ['none', 'es5', 'all'].includes(prettierSettings.trailingComma)
+          ? prettierSettings.trailingComma
+          : DEFAULT_SETTINGS.prettier.trailingComma,
+      bracketSpacing: validateBoolean(prettierSettings.bracketSpacing, DEFAULT_SETTINGS.prettier.bracketSpacing),
+      arrowParens:
+        prettierSettings.arrowParens && ['always', 'avoid'].includes(prettierSettings.arrowParens)
+          ? prettierSettings.arrowParens
+          : DEFAULT_SETTINGS.prettier.arrowParens,
+    },
   }
 }
 
