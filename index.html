@@ -32,6 +32,33 @@
             <path d="M7 4v16l13 -8z" />
           </svg>
         </button>
+        <button id="ai-toggle-button" class="icon-button" title="IA desactivada">
+          <svg id="robot-off-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M8 4h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2m-4 0h-4a2 2 0 0 1 -2 -2v-4" />
+            <path d="M12 2v2" />
+            <path d="M9 12v9" />
+            <path d="M15 15v6" />
+            <path d="M5 16l4 -2" />
+            <path d="M9 18h6" />
+            <path d="M14 8v.01" />
+            <path d="M3 3l18 18" />
+          </svg>
+          <svg id="robot-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="display: none">
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M6 4m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z" />
+            <path d="M12 2v2" />
+            <path d="M9 12v9" />
+            <path d="M15 12v9" />
+            <path d="M5 16l4 -2" />
+            <path d="M15 14l4 2" />
+            <path d="M9 18h6" />
+            <path d="M10 8v.01" />
+            <path d="M14 8v.01" />
+          </svg>
+        </button>
         <button id="settings-button" class="icon-button" title="Settings">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
@@ -67,15 +94,34 @@
         <div class="modal-body">
           <div class="settings-tabs">
             <button class="settings-tab active" data-tab="appearance">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path
+                  d="M12 21a9 9 0 0 1 0 -18c4.97 0 9 3.582 9 8c0 1.06 -.474 2.078 -1.318 2.828c-.844 .75 -1.989 1.172 -3.182 1.172h-2.5a2 2 0 0 0 -1 3.75a1.3 1.3 0 0 1 -1 2.25" />
+                <path d="M8.5 10.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                <path d="M12.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+                <path d="M16.5 10.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
               </svg>
               Appearance
             </button>
+            <button class="settings-tab" data-tab="formatting">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+                <path d="M13.5 6.5l4 4" />
+                <path d="M15 19l2 2l4 -4" />
+              </svg>
+              Formatting
+            </button>
             <button class="settings-tab" data-tab="advanced">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M12 1v6m0 6v6" />
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path
+                  d="M12.501 20.93c-.866 .25 -1.914 -.166 -2.176 -1.247a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.074 .26 1.49 1.296 1.252 2.158" />
+                <path d="M19 22v-6" />
+                <path d="M22 19l-3 -3l-3 3" />
+                <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
               </svg>
               Advanced
             </button>
@@ -115,6 +161,61 @@
               <div class="setting-item-checkbox">
                 <input type="checkbox" id="setting-line-numbers" checked />
                 <label for="setting-line-numbers">Show line numbers</label>
+              </div>
+            </div>
+
+            <!-- Formatting Tab -->
+            <div class="settings-panel" data-panel="formatting">
+              <div class="setting-item-checkbox">
+                <input type="checkbox" id="setting-auto-format" />
+                <label for="setting-auto-format">Automatically format code on run</label>
+              </div>
+              <div class="setting-item">
+                <label>Print Width</label>
+                <input type="number" id="setting-print-width" min="40" max="200" value="80" />
+              </div>
+              <div class="setting-item">
+                <label>Tab Width</label>
+                <input type="number" id="setting-tab-width" min="1" max="8" value="2" />
+              </div>
+              <div class="setting-item-checkbox">
+                <input type="checkbox" id="setting-semi" checked />
+                <label for="setting-semi">Print semicolons at the ends of statements</label>
+              </div>
+              <div class="setting-item-checkbox">
+                <input type="checkbox" id="setting-single-quote" />
+                <label for="setting-single-quote">Use single quotes instead of double quotes</label>
+              </div>
+              <div class="setting-item">
+                <label>Quote Props</label>
+                <select id="setting-quote-props">
+                  <option value="as-needed">as-needed</option>
+                  <option value="consistent">consistent</option>
+                  <option value="preserve">preserve</option>
+                </select>
+              </div>
+              <div class="setting-item-checkbox">
+                <input type="checkbox" id="setting-jsx-single-quote" />
+                <label for="setting-jsx-single-quote">Use single quotes instead of double quotes in JSX</label>
+              </div>
+              <div class="setting-item">
+                <label>Trailing Commas</label>
+                <select id="setting-trailing-comma">
+                  <option value="none">none</option>
+                  <option value="es5">es5</option>
+                  <option value="all">all</option>
+                </select>
+              </div>
+              <div class="setting-item-checkbox">
+                <input type="checkbox" id="setting-bracket-spacing" checked />
+                <label for="setting-bracket-spacing">Print spaces between brackets in object literals</label>
+              </div>
+              <div class="setting-item">
+                <label>Arrow Function Parentheses</label>
+                <select id="setting-arrow-parens">
+                  <option value="always">always</option>
+                  <option value="avoid">avoid</option>
+                </select>
               </div>
             </div>
 
