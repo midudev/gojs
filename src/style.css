@@ -216,6 +216,11 @@ body {
     color: #81c784;
   }
 
+  &.expression {
+    background-color: rgba(156, 39, 176, 0.05);
+    color: #ab47bc;
+  }
+
   &.table {
     background-color: rgba(255, 255, 255, 0.03);
     display: block;
