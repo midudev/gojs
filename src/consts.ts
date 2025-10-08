@@ -3,7 +3,11 @@ export const INITIAL_CODE = `// Bienvenido a XJS! ⚡
 console.log('¡Hola desde XJS!');
 console.info('XJS está listo para usar');
 
+// Las expresiones se evalúan automáticamente
 2 + 2;
+10 * 5;
+Math.sqrt(16);
+'Hola' + ' ' + 'Mundo';
 
 // Prueba con diferentes tipos de datos
 const numbers = [1, 2, 3, 4, 5];

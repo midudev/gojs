@@ -4,6 +4,7 @@ import './fonts.css'
 import { INITIAL_CODE } from './consts'
 import { loadSettings, updateSetting, calculateLineHeight } from './storage'
 import { initPrettierWorker, formatCode } from './prettier'
+import { injectExpressionLogging } from './console'
 
 // Estado de la aplicación
 let editor: any = null
@@ -299,7 +300,7 @@ async function runCode() {
   outputElement.innerHTML = ''
 
   const addLog = (
-    type: 'log' | 'info' | 'warn' | 'error' | 'time' | 'table' | 'count',
+    type: 'log' | 'info' | 'warn' | 'error' | 'time' | 'table' | 'count' | 'expression',
     lineNumber: number | null,
     data?: any,
     columns?: string[],
@@ -307,11 +308,14 @@ async function runCode() {
     const entry = document.createElement('div')
     entry.className = `log-entry ${type}`
 
-    const typeSpan = document.createElement('span')
-    typeSpan.className = 'log-type'
-    typeSpan.textContent = type
+    // No mostrar el tipo para expresiones
+    if (type !== 'expression') {
+      const typeSpan = document.createElement('span')
+      typeSpan.className = 'log-type'
+      typeSpan.textContent = type
 
-    entry.appendChild(typeSpan)
+      entry.appendChild(typeSpan)
+    }
 
     // Si es una tabla, renderizar de forma especial
     if (type === 'table' && data !== undefined) {
@@ -421,6 +425,9 @@ async function runCode() {
     countReset: (label: string = 'default') => {
       counters.delete(label)
     },
+    __logExpression__: (value: any, lineNumber: number) => {
+      addLog('expression', lineNumber, value)
+    },
   }
 
   // Función auxiliar para extraer número de línea
@@ -451,9 +458,12 @@ async function runCode() {
   }
 
   try {
+    // Inyectar logging de expresiones en el código
+    const modifiedCode = injectExpressionLogging(code)
+
     // Ejecutar código en un contexto aislado con console personalizado
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-    const fn = new AsyncFunction('console', code)
+    const fn = new AsyncFunction('console', modifiedCode)
 
     // Ejecutar y manejar promesas, pasando el console personalizado
     Promise.resolve(fn(customConsole)).catch((error) => {
