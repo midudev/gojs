@@ -27,6 +27,8 @@
     "vite": "7.1.8"
   },
   "dependencies": {
+    "acorn": "8.15.0",
+    "acorn-walk": "8.3.4",
     "modern-monaco": "0.2.2",
     "prettier": "3.6.2",
     "tm-themes": "1.10.9"
