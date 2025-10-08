@@ -3,6 +3,8 @@ export const INITIAL_CODE = `// Bienvenido a XJS! ⚡
 console.log('¡Hola desde XJS!');
 console.info('XJS está listo para usar');
 
+2 + 2;
+
 // Prueba con diferentes tipos de datos
 const numbers = [1, 2, 3, 4, 5];
 console.log('Números:', numbers);
