@@ -48,6 +48,14 @@ body {
   height: 36px;
 }
 
+.header-logo {
+  height: 20px;
+  width: auto;
+  border-radius: 6px;
+  margin-right: 12px;
+  object-fit: contain;
+}
+
 .tabs-container {
   flex: 1;
   display: flex;
@@ -148,6 +156,15 @@ body {
   background-color: rgba(79, 195, 247, 0.15) !important;
   border-left: 1px solid var(--color-accent) !important;
   transition: background-color 0.2s ease;
+}
+
+/* Valores de expresiones inline */
+.inline-expression-value {
+  opacity: 0.6;
+  font-style: italic;
+  color: var(--theme-comment, #6a9955) !important;
+  margin-left: 16px;
+  font-size: 0.9em;
 }
 
 /* Output */
