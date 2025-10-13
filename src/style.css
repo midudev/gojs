@@ -738,6 +738,10 @@ body {
     border-left: none;
     border-top: 1px solid var(--color-border);
   }
+
+  .chatbot-panel {
+    max-width: 100%;
+  }
 }
 
 .mtku {
