@@ -270,7 +270,7 @@ body {
   padding: 16px;
   font-family: var(--font-mono);
   font-size: 13px;
-  line-height: 1.6;
+  line-height: var(--editor-line-height, 1.6);
   background-color: var(--editor-background, var(--color-bg-primary));
 }
 
@@ -281,8 +281,8 @@ body {
 }
 
 .log-entry {
-  padding: 8px 12px;
-  margin-bottom: 8px;
+  padding: 2px 12px;
+  margin-bottom: 1px;
   border-radius: 4px;
   border-left: 1px solid transparent;
   word-wrap: break-word;
