@@ -89,7 +89,7 @@ function render() {
     closeEl.className = 'tab-close'
     closeEl.setAttribute('aria-label', 'Cerrar pestaña')
     closeEl.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-x">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-x">
         <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
         <path d="M18 6l-12 12" />
         <path d="M6 6l12 12" />
@@ -97,10 +97,8 @@ function render() {
     `
 
     tabEl.appendChild(nameEl)
-    // Mostrar botón de cierre solo en pestaña activa
-    if (t.id === state.activeId) {
-      tabEl.appendChild(closeEl)
-    }
+    // Añadir botón de cierre siempre para conservar área de click uniforme
+    tabEl.appendChild(closeEl)
 
     tabEl.addEventListener('click', () => switchTab(t.id))
     closeEl.addEventListener('click', (e) => {
@@ -113,7 +111,7 @@ function render() {
 
   const addBtn = document.createElement('button')
   addBtn.className = 'tab-add'
-  addBtn.textContent = '+'
+  addBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-plus"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 5l0 14" /><path d="M5 12l14 0" /></svg>`
   addBtn.title = 'Nueva pestaña (Ctrl/Cmd+T)'
   addBtn.addEventListener('click', () => newTab())
 
