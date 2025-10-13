@@ -7,6 +7,7 @@ import { loadSettings, updateSetting, calculateLineHeight } from './storage'
 import { initPrettierWorker, formatCode } from './prettier'
 import { injectExpressionLogging } from './console'
 import { initHeaderPopovers } from './popovers'
+import { initTabs } from './tabs'
 
 // Estado de la aplicación
 let editor: any = null
@@ -110,6 +111,12 @@ async function initEditor() {
 
   // Sincronizar colores del tema
   syncThemeColors()
+
+  // Inicializar sistema de pestañas (tabs) y re-ejecutar al activar
+  initTabs(editor, monaco, () => {
+    // Re-ejecutar el código de la pestaña activa para refrescar la salida
+    runCode()
+  })
 }
 
 // Sincronizar el color de fondo del editor con la consola y header
