@@ -27,6 +27,7 @@
     "vite": "7.1.9"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "^0.2.79",
     "acorn": "8.15.0",
     "acorn-walk": "8.3.4",
     "modern-monaco": "0.2.2",
