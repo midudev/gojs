@@ -1103,3 +1103,150 @@ body {
   font-size: 13px;
   text-align: center;
 }
+
+/* Thinking Block */
+.thinking-block {
+  margin: 8px 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background-color: rgba(79, 195, 247, 0.05);
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s ease;
+  border-bottom: 1px solid transparent;
+}
+
+.thinking-header:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.thinking-block.expanded .thinking-header {
+  border-bottom-color: var(--color-border);
+}
+
+.thinking-header svg {
+  color: var(--theme-mtk14, var(--color-accent));
+  flex-shrink: 0;
+}
+
+.thinking-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex: 1;
+}
+
+.thinking-chevron {
+  color: var(--color-text-secondary);
+  transition: transform 0.3s ease;
+  flex-shrink: 0;
+}
+
+.thinking-block.expanded .thinking-chevron {
+  transform: rotate(180deg);
+}
+
+.thinking-content {
+  max-height: 0;
+  overflow: hidden;
+  padding: 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  opacity: 0.8;
+  transition: all 0.3s ease;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.thinking-block.expanded .thinking-content {
+  max-height: 500px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+/* Loading animation (shimmer effect) */
+.thinking-content.loading {
+  position: relative;
+  overflow: visible;
+}
+
+.thinking-content.loading::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.1) 50%, transparent 100%);
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    left: -100%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+.thinking-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.thinking-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thinking-content::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 2px;
+}
+
+.thinking-content::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}
+
+/* Code blocks in chatbot messages */
+.chatbot-message-content .code-block {
+  margin: 8px 0;
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.chatbot-message-content .code-block pre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.chatbot-message-content .code-block::-webkit-scrollbar {
+  height: 6px;
+}
+
+.chatbot-message-content .code-block::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chatbot-message-content .code-block::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+.chatbot-message-content .code-block::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}
