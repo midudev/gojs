@@ -19,18 +19,18 @@
   ],
   "author": "",
   "license": "MIT",
-  "packageManager": "pnpm@10.17.1",
+  "packageManager": "pnpm@10.18.2",
   "devDependencies": {
     "@tauri-apps/cli": "2.8.4",
-    "@types/node": "24.6.2",
+    "@types/node": "24.7.2",
     "typescript": "5.9.3",
-    "vite": "7.1.8"
+    "vite": "7.1.9"
   },
   "dependencies": {
     "acorn": "8.15.0",
     "acorn-walk": "8.3.4",
     "modern-monaco": "0.2.2",
     "prettier": "3.6.2",
-    "tm-themes": "1.10.9"
+    "tm-themes": "1.10.11"
   }
 }
