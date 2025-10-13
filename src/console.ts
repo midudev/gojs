@@ -6,6 +6,9 @@ interface ExpressionInfo {
   line: number
 }
 
+// Mapa de líneas: línea en código modificado -> línea en código original
+export const lineMap = new Map<number, number>()
+
 /**
  * Detecta expresiones en el código que deberían evaluarse y mostrarse en la consola
  * @param code El código JavaScript a analizar
@@ -70,9 +73,17 @@ export function detectExpressions(code: string): ExpressionInfo[] {
  * @returns El código modificado con las inyecciones
  */
 export function injectExpressionLogging(code: string): string {
+  // Limpiar el mapa
+  lineMap.clear()
+
   const expressions = detectExpressions(code)
 
   if (expressions.length === 0) {
+    // Sin inyecciones, mapeo 1:1
+    const originalLines = code.split('\n').length
+    for (let i = 1; i <= originalLines; i++) {
+      lineMap.set(i + 1, i) // +1 por el wrapper de AsyncFunction
+    }
     return code
   }
 
@@ -80,6 +91,7 @@ export function injectExpressionLogging(code: string): string {
   expressions.sort((a, b) => b.start - a.start)
 
   let modifiedCode = code
+  let linesAdded = 0
 
   for (const expr of expressions) {
     const exprCode = code.substring(expr.start, expr.end)
@@ -94,7 +106,31 @@ export function injectExpressionLogging(code: string): string {
       return __expr_result__;
     })();`
 
+    // Contar líneas añadidas por esta inyección
+    const injectionLines = injection.split('\n').length - 1 // -1 porque reemplaza una línea
+    linesAdded += injectionLines
+
     modifiedCode = modifiedCode.substring(0, expr.start) + injection + modifiedCode.substring(expr.end)
+  }
+
+  // Construir mapa de líneas: línea en código modificado -> línea en código original
+  // AsyncFunction añade 1 línea al inicio
+  const modifiedLines = modifiedCode.split('\n')
+
+  // Mapear considerando las inyecciones
+  let originalLineNum = 1
+  let injectedLineOffset = 0
+
+  for (let modLineNum = 2; modLineNum <= modifiedLines.length + 1; modLineNum++) {
+    // Calcular cuántas líneas de inyección hay antes de esta línea
+    const exprsBeforeLine = expressions.filter((e) => e.line < originalLineNum).length
+    injectedLineOffset = exprsBeforeLine * 6 // cada inyección añade 6 líneas
+
+    if (modLineNum - 1 - injectedLineOffset >= 0) {
+      originalLineNum = modLineNum - 1 - injectedLineOffset
+    }
+
+    lineMap.set(modLineNum, originalLineNum)
   }
 
   return modifiedCode

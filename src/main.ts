@@ -5,9 +5,10 @@ import { init } from 'modern-monaco'
 import { INITIAL_CODE } from './consts'
 import { loadSettings, updateSetting, calculateLineHeight } from './storage'
 import { initPrettierWorker, formatCode } from './prettier'
-import { injectExpressionLogging } from './console'
+import { injectExpressionLogging, lineMap } from './console'
 import { initHeaderPopovers } from './popovers'
 import { initTabs } from './tabs'
+import { $, $$ } from './dom'
 
 // Estado de la aplicación
 let editor: any = null
@@ -22,7 +23,7 @@ let currentSettings = loadSettings()
 
 // Inicializar editor
 async function initEditor() {
-  const editorElement = document.getElementById('editor')!
+  const editorElement = $('#editor')!
 
   // Inicializar Monaco con configuración manual
   monaco = await init({
@@ -303,7 +304,7 @@ async function runCode() {
   }
 
   const code = editor.getValue()
-  const outputElement = document.getElementById('output')!
+  const outputElement = $('#output')!
 
   // Limpiar salida anterior
   outputElement.innerHTML = ''
@@ -443,6 +444,9 @@ async function runCode() {
   function extractLineNumber(stack: string): number | null {
     const lines = stack.split('\n')
 
+    // DEBUG: descomentar para ver el stack completo
+    // console.log('STACK:', stack)
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
 
@@ -456,9 +460,16 @@ async function runCode() {
 
       if (match && i > 0) {
         // Ignorar la primera línea (es el Error() mismo)
-        // AsyncFunction añade 2 líneas al inicio (wrapper de la función)
-        // Restar ese offset para obtener el número de línea real del código
-        const lineNum = parseInt(match[1], 10) - 2
+        const rawLineNum = Number(match[1])
+
+        // Usar el lineMap para mapear de vuelta a la línea original
+        const mappedLine = lineMap.get(rawLineNum)
+        if (mappedLine) {
+          return mappedLine > 0 ? mappedLine : null
+        }
+
+        // Fallback: restar 1 por el wrapper de AsyncFunction
+        const lineNum = rawLineNum - 2
         return lineNum > 0 ? lineNum : null
       }
     }
@@ -730,9 +741,9 @@ function clearEditorHighlight() {
 
 // Configurar resize del panel divisor
 function setupResizer() {
-  const divider = document.getElementById('divider')!
-  const editorPanel = document.querySelector('.editor-panel') as HTMLElement
-  const outputPanel = document.querySelector('.output-panel') as HTMLElement
+  const divider = $('#divider') as HTMLElement
+  const editorPanel = $('.editor-panel') as HTMLElement
+  const outputPanel = $('.output-panel') as HTMLElement
 
   let isResizing = false
   let startX = 0
@@ -781,9 +792,9 @@ async function start() {
   setupResizer()
 
   // Event listener para el botón de auto-run toggle
-  const autorunToggleButton = document.getElementById('autorun-toggle-button')
-  const pauseIcon = document.getElementById('pause-icon')
-  const playIcon = document.getElementById('play-icon')
+  const autorunToggleButton = $('#autorun-toggle-button') as HTMLElement
+  const pauseIcon = $('#pause-icon') as HTMLElement
+  const playIcon = $('#play-icon') as HTMLElement
 
   if (autorunToggleButton && pauseIcon && playIcon) {
     autorunToggleButton.addEventListener('click', () => {
@@ -857,8 +868,8 @@ async function start() {
     })
 
     // Settings tabs
-    const tabs = document.querySelectorAll('.settings-tab')
-    const panels = document.querySelectorAll('.settings-panel')
+    const tabs = $$('.settings-tab')
+    const panels = $$('.settings-panel')
 
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
@@ -870,20 +881,20 @@ async function start() {
 
         // Update active panel
         panels.forEach((p) => p.classList.remove('active'))
-        const panel = document.querySelector(`[data-panel="${targetPanel}"]`)
+        const panel = $(`[data-panel="${targetPanel}"]`)
         panel?.classList.add('active')
       })
     })
 
     // Cargar valores actuales en el formulario
-    const themeSelect = document.getElementById('setting-theme') as HTMLSelectElement
-    const fontFamilySelect = document.getElementById('setting-font-family') as HTMLSelectElement
-    const fontSizeInput = document.getElementById('setting-font-size') as HTMLInputElement
-    const minimapCheck = document.getElementById('setting-minimap') as HTMLInputElement
-    const lineNumbersCheck = document.getElementById('setting-line-numbers') as HTMLInputElement
-    const debounceInput = document.getElementById('setting-debounce') as HTMLInputElement
-    const formatPasteCheck = document.getElementById('setting-format-on-paste') as HTMLInputElement
-    const formatTypeCheck = document.getElementById('setting-format-on-type') as HTMLInputElement
+    const themeSelect = $('#setting-theme') as HTMLSelectElement
+    const fontFamilySelect = $('#setting-font-family') as HTMLSelectElement
+    const fontSizeInput = $('#setting-font-size') as HTMLInputElement
+    const minimapCheck = $('#setting-minimap') as HTMLInputElement
+    const lineNumbersCheck = $('#setting-line-numbers') as HTMLInputElement
+    const debounceInput = $('#setting-debounce') as HTMLInputElement
+    const formatPasteCheck = $('#setting-format-on-paste') as HTMLInputElement
+    const formatTypeCheck = $('#setting-format-on-type') as HTMLInputElement
 
     // Sincronizar UI con settings actuales
     if (themeSelect) themeSelect.value = currentSettings.theme
