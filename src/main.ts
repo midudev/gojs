@@ -822,6 +822,7 @@ async function start() {
 
   // Event listener para el botón de settings
   const settingsButton = document.getElementById('settings-button')
+  const issueButton = document.getElementById('issue-button')
   const settingsModal = document.getElementById('settings-modal')
   const closeSettings = document.getElementById('close-settings')
   const modalOverlay = settingsModal?.querySelector('.modal-overlay')
@@ -1030,12 +1031,13 @@ async function start() {
   const tooltipAutorun = document.getElementById('tooltip-autorun') as HTMLElement | null
   const tooltipAI = document.getElementById('tooltip-ai') as HTMLElement | null
   const tooltipSettings = document.getElementById('tooltip-settings') as HTMLElement | null
+  const tooltipIssue = document.getElementById('tooltip-issue') as HTMLElement | null
 
   const attachHintTooltip = (button: HTMLElement | null, tooltip: HTMLElement | null) => {
     if (!button || !tooltip) return
 
     // Mostrar en hover y focus
-    const show = () => tooltip.showPopover({ source: button })
+    const show = () => (tooltip as any).showPopover({ source: button })
     const hide = () => tooltip.hidePopover()
 
     button.addEventListener('mouseover', show)
@@ -1047,18 +1049,19 @@ async function start() {
     window.addEventListener(
       'scroll',
       () => {
-        if (tooltip.matches(':popover-open')) tooltip.showPopover({ source: button })
+        if (tooltip.matches(':popover-open')) (tooltip as any).showPopover({ source: button })
       },
       { passive: true },
     )
     window.addEventListener('resize', () => {
-      if (tooltip.matches(':popover-open')) tooltip.showPopover({ source: button })
+      if (tooltip.matches(':popover-open')) (tooltip as any).showPopover({ source: button })
     })
   }
 
   attachHintTooltip(autorunToggleButton as HTMLElement | null, tooltipAutorun)
   attachHintTooltip(aiToggleButton as HTMLElement | null, tooltipAI)
   attachHintTooltip(settingsButton as HTMLElement | null, tooltipSettings)
+  attachHintTooltip(issueButton as HTMLElement | null, tooltipIssue)
 
   // Ejecutar código inicial si auto-run está habilitado
   if (autoRunEnabled) {
