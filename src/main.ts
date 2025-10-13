@@ -50,6 +50,8 @@ async function initEditor() {
   })
 
   // Crear instancia del editor
+  console.log(currentSettings)
+  debugger
   editor = monaco.editor.create(editorElement, {
     value: INITIAL_CODE,
     language: 'javascript',
@@ -279,7 +281,7 @@ async function formatEditorCode() {
 
   try {
     const code = editor.getValue()
-    const formatted = await formatCode(code, currentSettings.prettier)
+    const formatted = await formatCode(code, currentSettings.prettier).catch(() => code)
 
     if (formatted !== code) {
       // Guardar posición del cursor
