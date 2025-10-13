@@ -648,3 +648,56 @@ body {
 .mtku {
   text-decoration: none !important;
 }
+
+/* Tooltips using Popover API + anchor positioning */
+.tooltip[popover='hint'] {
+  margin: 0;
+  inset: auto;
+  position: absolute;
+  z-index: 1001;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  background-color: rgba(0, 0, 0, 0.8);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  /* Default placement under anchor */
+  top: calc(anchor(bottom) + 6px);
+  left: anchor(center);
+  translate: -50% 0;
+}
+
+/* Ensure tooltips adapt on light themes */
+@media (prefers-color-scheme: light) {
+  .tooltip[popover='hint'] {
+    background-color: rgba(255, 255, 255, 0.95);
+    color: #111;
+    border-color: rgba(0, 0, 0, 0.15);
+  }
+}
+
+/* Subtle appearance animation using transitions (allow-discrete) */
+.tooltip {
+  opacity: 0;
+  transform: translateY(-2px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    overlay 120ms allow-discrete,
+    display 120ms allow-discrete;
+}
+
+.tooltip:popover-open {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@starting-style {
+  .tooltip:popover-open {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
