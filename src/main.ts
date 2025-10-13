@@ -1026,6 +1026,40 @@ async function start() {
     })
   }
 
+  // Tooltips (Popover API - hint) para botones del header usando implicit anchor
+  const tooltipAutorun = document.getElementById('tooltip-autorun') as HTMLElement | null
+  const tooltipAI = document.getElementById('tooltip-ai') as HTMLElement | null
+  const tooltipSettings = document.getElementById('tooltip-settings') as HTMLElement | null
+
+  const attachHintTooltip = (button: HTMLElement | null, tooltip: HTMLElement | null) => {
+    if (!button || !tooltip) return
+
+    // Mostrar en hover y focus
+    const show = () => tooltip.showPopover({ source: button })
+    const hide = () => tooltip.hidePopover()
+
+    button.addEventListener('mouseover', show)
+    button.addEventListener('mouseout', hide)
+    button.addEventListener('focus', show)
+    button.addEventListener('blur', hide)
+
+    // También recolocar en scroll/resize (por si cambia el layout)
+    window.addEventListener(
+      'scroll',
+      () => {
+        if (tooltip.matches(':popover-open')) tooltip.showPopover({ source: button })
+      },
+      { passive: true },
+    )
+    window.addEventListener('resize', () => {
+      if (tooltip.matches(':popover-open')) tooltip.showPopover({ source: button })
+    })
+  }
+
+  attachHintTooltip(autorunToggleButton as HTMLElement | null, tooltipAutorun)
+  attachHintTooltip(aiToggleButton as HTMLElement | null, tooltipAI)
+  attachHintTooltip(settingsButton as HTMLElement | null, tooltipSettings)
+
   // Ejecutar código inicial si auto-run está habilitado
   if (autoRunEnabled) {
     runCode()
