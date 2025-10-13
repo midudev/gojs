@@ -63,7 +63,74 @@ body {
   gap: 4px;
   overflow-x: auto;
   overflow-y: hidden;
-  /* Espacio preparado para las pestañas futuras */
+  margin-bottom: -15px;
+}
+
+.tabs-list {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tab-item {
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 6px 12px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 4px 4px 0 0;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+  white-space: nowrap;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: var(--color-text-primary);
+  }
+
+  &.active {
+    background-color: var(--editor-background, var(--color-bg-primary));
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
+    border-bottom-color: transparent;
+    cursor: default;
+  }
+}
+
+.tab-name {
+  font-size: 14px;
+}
+
+.tab-close {
+  opacity: 0.6;
+  font-size: 12px;
+  line-height: 1;
+
+  &:hover {
+    opacity: 0.9;
+  }
+}
+
+.tab-add {
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+  margin-left: 4px;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: var(--color-text-primary);
+  }
 }
 
 .tabs-container::-webkit-scrollbar {
