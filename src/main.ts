@@ -471,11 +471,12 @@ async function runCode() {
         // Usar el lineMap para mapear de vuelta a la línea original
         const mappedLine = lineMap.get(rawLineNum)
         if (mappedLine) {
-          return mappedLine > 0 ? mappedLine : null
+          return mappedLine > 0 ? mappedLine - 1 : null
         }
 
         // Fallback: restar 1 por el wrapper de AsyncFunction
-        const lineNum = rawLineNum - 2
+        const lineNum = rawLineNum - 1
+
         return lineNum > 0 ? lineNum : null
       }
     }
