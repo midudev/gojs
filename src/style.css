@@ -88,7 +88,7 @@ body {
   white-space: nowrap;
 
   &:hover {
-    background-color: rgba(255, 255, 255, 0.06);
+    background-color: rgba(255, 255, 255, 0.05);
     color: var(--color-text-primary);
   }
 
@@ -107,11 +107,25 @@ body {
 
 .tab-close {
   opacity: 0.6;
-  font-size: 12px;
   line-height: 1;
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
 
   &:hover {
-    opacity: 0.9;
+    opacity: 1;
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  &:active {
+    transform: scale(0.9);
   }
 }
 
