@@ -2,6 +2,7 @@ import './style.css'
 import './fonts.css'
 
 import { init } from 'modern-monaco'
+import { render as renderShiki } from 'modern-monaco/shiki'
 import { INITIAL_CODE } from './consts'
 import { loadSettings, updateSetting, calculateLineHeight } from './storage'
 import { initPrettierWorker, formatCode } from './prettier'
@@ -1230,22 +1231,112 @@ async function initChatbot() {
 
       const roleSpan = document.createElement('div')
       roleSpan.className = 'chatbot-message-role'
-      roleSpan.textContent = 'Asistente'
-
-      const contentDiv = document.createElement('div')
-      contentDiv.className = 'chatbot-message-content'
-      contentDiv.textContent = ''
+      roleSpan.textContent = 'AI Assistant'
 
       assistantMessageDiv.appendChild(roleSpan)
-      assistantMessageDiv.appendChild(contentDiv)
 
       // Ocultar indicador de escritura y mostrar mensaje
       typingIndicator.remove()
       chatbotMessages?.appendChild(assistantMessageDiv)
 
+      // Variables para procesar el streaming con <think>
+      let fullContent = ''
+      let isInThinkTag = false
+      let thinkContent = ''
+      let regularContent = ''
+      let thinkBlock: HTMLElement | null = null
+      let contentDiv: HTMLElement | null = null
+
       // Enviar mensaje y recibir respuesta con streaming
       await chatbot.sendMessage(contextualMessage, (chunk) => {
-        contentDiv.textContent += chunk
+        fullContent += chunk
+
+        // Detectar inicio de <think>
+        if (fullContent.includes('<think>') && !isInThinkTag) {
+          isInThinkTag = true
+          const parts = fullContent.split('<think>')
+          regularContent = parts[0]
+          thinkContent = parts[1] || ''
+
+          // Crear bloque de pensamiento si no existe
+          if (!thinkBlock) {
+            thinkBlock = createThinkingBlock()
+            assistantMessageDiv.appendChild(thinkBlock)
+          }
+        }
+
+        // Detectar fin de </think>
+        if (fullContent.includes('</think>') && isInThinkTag) {
+          isInThinkTag = false
+          const parts = fullContent.split('</think>')
+          const beforeClose = parts[0]
+          const afterClose = parts[1] || ''
+
+          // Extraer contenido del think
+          if (beforeClose.includes('<think>')) {
+            thinkContent = beforeClose.split('<think>')[1]
+          }
+
+          // Actualizar bloque de pensamiento con contenido completo
+          if (thinkBlock) {
+            updateThinkingBlock(thinkBlock, thinkContent, true)
+          }
+
+          // Crear div para contenido regular si no existe
+          if (!contentDiv) {
+            contentDiv = document.createElement('div')
+            contentDiv.className = 'chatbot-message-content'
+            assistantMessageDiv.appendChild(contentDiv)
+          }
+
+          regularContent = afterClose
+          // Procesar código markdown y actualizar contenido
+          processMarkdownCode(regularContent).then((processed) => {
+            contentDiv!.innerHTML = processed
+          })
+        } else if (isInThinkTag) {
+          // Actualizar contenido de think
+          const parts = fullContent.split('<think>')
+          if (parts.length > 1) {
+            thinkContent = parts[1]
+            if (thinkBlock) {
+              updateThinkingBlock(thinkBlock, thinkContent, false)
+            }
+          }
+        } else {
+          // Actualizar contenido regular
+          if (!contentDiv) {
+            contentDiv = document.createElement('div')
+            contentDiv.className = 'chatbot-message-content'
+            assistantMessageDiv.appendChild(contentDiv)
+          }
+
+          // Si no hay think tag, mostrar todo
+          if (!fullContent.includes('<think>')) {
+            // Procesar markdown si hay código
+            if (fullContent.includes('```')) {
+              processMarkdownCode(fullContent).then((processed) => {
+                contentDiv!.innerHTML = processed
+              })
+            } else {
+              contentDiv.textContent = fullContent
+            }
+          } else {
+            // Ya pasó el think tag, mostrar solo la parte después de </think>
+            const parts = fullContent.split('</think>')
+            if (parts.length > 1) {
+              const content = parts[1]
+              if (content.includes('```')) {
+                processMarkdownCode(content).then((processed) => {
+                  contentDiv!.innerHTML = processed
+                })
+              } else {
+                contentDiv.textContent = content
+              }
+            }
+          }
+        }
+
         chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
       })
 
@@ -1283,6 +1374,121 @@ async function initChatbot() {
 
     chatbotMessages.appendChild(messageDiv)
     chatbotMessages.scrollTo(0, chatbotMessages.scrollHeight)
+  }
+
+  // Crear bloque de pensamiento
+  function createThinkingBlock(): HTMLElement {
+    const thinkBlock = document.createElement('div')
+    thinkBlock.className = 'thinking-block'
+
+    const thinkHeader = document.createElement('div')
+    thinkHeader.className = 'thinking-header'
+
+    const thinkIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    thinkIcon.setAttribute('width', '16')
+    thinkIcon.setAttribute('height', '16')
+    thinkIcon.setAttribute('viewBox', '0 0 24 24')
+    thinkIcon.setAttribute('fill', 'none')
+    thinkIcon.setAttribute('stroke', 'currentColor')
+    thinkIcon.setAttribute('stroke-width', '1.5')
+    thinkIcon.setAttribute('stroke-linecap', 'round')
+    thinkIcon.setAttribute('stroke-linejoin', 'round')
+    thinkIcon.innerHTML = `
+      <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+      <path d="M15.5 13a3.5 3.5 0 0 0 -3.5 3.5v1a3.5 3.5 0 0 0 7 0v-1.8" />
+      <path d="M8.5 13a3.5 3.5 0 0 1 3.5 3.5v1a3.5 3.5 0 0 1 -7 0v-1.8" />
+      <path d="M17.5 16a3.5 3.5 0 0 0 0 -7h-.5" />
+      <path d="M19 9.3v-2.8a3.5 3.5 0 0 0 -7 0" />
+      <path d="M6.5 16a3.5 3.5 0 0 1 0 -7h.5" />
+      <path d="M5 9.3v-2.8a3.5 3.5 0 0 1 7 0v10" />
+    `
+
+    const thinkLabel = document.createElement('span')
+    thinkLabel.className = 'thinking-label'
+    thinkLabel.textContent = 'Thinking...'
+
+    const chevronIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    chevronIcon.classList.add('thinking-chevron')
+    chevronIcon.setAttribute('width', '14')
+    chevronIcon.setAttribute('height', '14')
+    chevronIcon.setAttribute('viewBox', '0 0 24 24')
+    chevronIcon.setAttribute('fill', 'none')
+    chevronIcon.setAttribute('stroke', 'currentColor')
+    chevronIcon.setAttribute('stroke-width', '2')
+    chevronIcon.setAttribute('stroke-linecap', 'round')
+    chevronIcon.setAttribute('stroke-linejoin', 'round')
+    chevronIcon.innerHTML = '<path d="M6 9l6 6l6 -6" />'
+
+    thinkHeader.appendChild(thinkIcon)
+    thinkHeader.appendChild(thinkLabel)
+    thinkHeader.appendChild(chevronIcon)
+
+    const thinkContent = document.createElement('div')
+    thinkContent.className = 'thinking-content loading'
+
+    thinkBlock.appendChild(thinkHeader)
+    thinkBlock.appendChild(thinkContent)
+
+    // Click para expandir/contraer
+    thinkHeader.addEventListener('click', () => {
+      thinkBlock.classList.toggle('expanded')
+    })
+
+    return thinkBlock
+  }
+
+  // Actualizar bloque de pensamiento
+  function updateThinkingBlock(thinkBlock: HTMLElement, content: string, isComplete: boolean) {
+    const thinkContent = thinkBlock.querySelector('.thinking-content')
+    const thinkLabel = thinkBlock.querySelector('.thinking-label')
+    if (!thinkContent) return
+
+    thinkContent.textContent = content
+
+    if (isComplete) {
+      thinkContent.classList.remove('loading')
+      // Cambiar label a "Thought"
+      if (thinkLabel) {
+        thinkLabel.textContent = 'Thought'
+      }
+      // Auto-colapsar cuando está completo
+      setTimeout(() => {
+        thinkBlock.classList.remove('expanded')
+      }, 1000)
+    } else {
+      // Mantener expandido mientras se está escribiendo
+      thinkBlock.classList.add('expanded')
+    }
+  }
+
+  // Procesar código markdown en el contenido
+  async function processMarkdownCode(content: string): Promise<string> {
+    // Detectar bloques de código ```lang\ncode\n```
+    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g
+    let processedContent = content
+    const matches = Array.from(content.matchAll(codeBlockRegex))
+
+    for (const match of matches) {
+      const lang = match[1] || 'javascript'
+      const code = match[2]
+
+      try {
+        // Usar shiki para renderizar el código
+        const highlighted = await renderShiki(code, {
+          lang,
+          theme: currentSettings.theme,
+        })
+
+        // Reemplazar el bloque con el HTML resaltado
+        processedContent = processedContent.replace(match[0], `<div class="code-block">${highlighted}</div>`)
+      } catch (error) {
+        console.error('Error highlighting code:', error)
+        // Si falla, mantener el código sin resaltar
+        processedContent = processedContent.replace(match[0], `<pre class="code-block"><code>${code}</code></pre>`)
+      }
+    }
+
+    return processedContent
   }
 }
 
