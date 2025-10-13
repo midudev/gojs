@@ -4,12 +4,48 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>XJS - JavaScript Playground</title>
+  <title>GoJS.app - JavaScript/TypeScript Playground</title>
   <meta name="description" content="A modern JavaScript/TypeScript playground">
   <meta name="keywords" content="JavaScript, TypeScript, Playground, REPL, Monaco">
-  <meta name="author" content="XJS">
+  <meta name="author" content="midudev">
   <meta name="robots" content="index, follow">
   <meta name="google" content="notranslate">
+  <link rel="canonical" href="https://gojs.app/" />
+  <link rel="icon" href="/gojs.webp" type="image/webp" />
+  <meta name="theme-color" content="#0ea5e9" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="GoJS.app - JavaScript/TypeScript Playground" />
+  <meta property="og:description" content="A modern JavaScript/TypeScript playground" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://gojs.app/" />
+  <meta property="og:image" content="/gojs.webp" />
+  <meta property="og:site_name" content="GoJS.app" />
+  <meta property="og:locale" content="es_ES" />
+
+  <!-- Twitter Cards -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="GoJS.app - JavaScript/TypeScript Playground" />
+  <meta name="twitter:description" content="A modern JavaScript/TypeScript playground" />
+  <meta name="twitter:image" content="/gojs.webp" />
+
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "GoJS.app",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Web",
+    "url": "https://gojs.app/",
+    "image": "/gojs.webp",
+    "description": "A modern JavaScript/TypeScript playground",
+    "author": {
+      "@type": "Person",
+      "name": "midudev"
+    }
+  }
+  </script>
 </head>
 
 <body>
@@ -35,7 +71,7 @@
         </button>
         <button id="ai-toggle-button" class="icon-button" title="IA desactivada">
           <svg id="robot-off-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+            fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path stroke="none" d="M0 0h24v24H0z" fill="none" />
             <path d="M8 4h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2m-4 0h-4a2 2 0 0 1 -2 -2v-4" />
             <path d="M12 2v2" />
@@ -47,7 +83,8 @@
             <path d="M3 3l18 18" />
           </svg>
           <svg id="robot-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="display: none">
+            stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+            style="display: none">
             <path stroke="none" d="M0 0h24v24H0z" fill="none" />
             <path d="M6 4m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z" />
             <path d="M12 2v2" />
@@ -83,6 +120,11 @@
         <div id="output" class="output-content"></div>
       </div>
     </main>
+
+    <!-- Tooltips (Popover API - hint) for header actions -->
+    <div id="tooltip-autorun" class="tooltip" popover="hint">Auto execute</div>
+    <div id="tooltip-ai" class="tooltip" popover="hint">Alternate IA</div>
+    <div id="tooltip-settings" class="tooltip" popover="hint">Settings</div>
 
     <!-- Settings Modal -->
     <div id="settings-modal" class="modal" style="display: none">
