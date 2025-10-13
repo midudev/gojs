@@ -9,6 +9,7 @@ import { injectExpressionLogging, lineMap } from './console'
 import { initHeaderPopovers } from './popovers'
 import { initTabs } from './tabs'
 import { $, $$ } from './dom'
+import { chatbot, ChatbotState } from './chatbot'
 
 // Estado de la aplicación
 let editor: any = null
@@ -172,6 +173,7 @@ function syncThemeColors() {
     const commentColor = getTokenColor('mtk3') || '#6a9955' // comments
     const functionColor = getTokenColor('mtk12') || '#dcdcaa' // functions
     const booleanColor = getTokenColor('mtk9') || '#569cd6' // booleans
+    const mtk14Color = getTokenColor('mtk14') || '#4fc3f7' // mtk14 token color for chatbot
 
     // Establecer variables CSS
     document.documentElement.style.setProperty('--theme-string', stringColor)
@@ -180,6 +182,7 @@ function syncThemeColors() {
     document.documentElement.style.setProperty('--theme-comment', commentColor)
     document.documentElement.style.setProperty('--theme-function', functionColor)
     document.documentElement.style.setProperty('--theme-boolean', booleanColor)
+    document.documentElement.style.setProperty('--theme-mtk14', mtk14Color)
   } catch (error) {
     console.error('Error al sincronizar colores del tema:', error)
   }
@@ -819,23 +822,30 @@ async function start() {
   const aiToggleButton = document.getElementById('ai-toggle-button')
   const robotIcon = document.getElementById('robot-icon')
   const robotOffIcon = document.getElementById('robot-off-icon')
+  const chatbotPanel = document.getElementById('chatbot-panel')
+  const chatbotDivider = document.getElementById('chatbot-divider')
   let aiEnabled = false
 
-  if (aiToggleButton && robotIcon && robotOffIcon) {
+  if (aiToggleButton && robotIcon && robotOffIcon && chatbotPanel && chatbotDivider) {
     aiToggleButton.addEventListener('click', () => {
       aiEnabled = !aiEnabled
 
-      // Alternar los iconos
+      // Alternar los iconos y mostrar/ocultar el panel
       if (aiEnabled) {
         robotIcon.style.display = 'block'
         robotOffIcon.style.display = 'none'
         aiToggleButton.title = 'IA activada (click para desactivar)'
-        // Aquí irá la lógica para activar la IA
+        chatbotPanel.style.display = 'flex'
+        chatbotDivider.style.display = 'block'
+
+        // Inicializar el chatbot cuando se activa
+        initChatbot()
       } else {
         robotIcon.style.display = 'none'
         robotOffIcon.style.display = 'block'
         aiToggleButton.title = 'IA desactivada (click para activar)'
-        // Aquí irá la lógica para desactivar la IA
+        chatbotPanel.style.display = 'none'
+        chatbotDivider.style.display = 'none'
       }
     })
   }
@@ -1052,6 +1062,227 @@ async function start() {
   // Ejecutar código inicial si auto-run está habilitado
   if (autoRunEnabled) {
     runCode()
+  }
+}
+
+// Inicializar el chatbot
+let chatbotInitialized = false
+
+async function initChatbot() {
+  if (chatbotInitialized) return
+
+  chatbotInitialized = true
+
+  const chatbotMessages = $('#chatbot-messages') as HTMLElement
+  const chatbotInput = $('#chatbot-input') as HTMLTextAreaElement
+  const chatbotSend = $('#chatbot-send') as HTMLButtonElement
+  const chatbotClear = $('#chatbot-clear') as HTMLButtonElement
+  const loadingElement = $('#chatbot-loading') as HTMLElement
+  const loadingProgressBar = $('#loading-progress-bar') as HTMLElement
+  const loadingProgressText = $('#loading-progress-text') as HTMLElement
+
+  if (!chatbotMessages || !chatbotInput || !chatbotSend || !chatbotClear) {
+    console.error('Chatbot elements not found')
+    return
+  }
+
+  // Configurar listener de estado
+  chatbot.setStateChangeListener((state: ChatbotState) => {
+    console.log('Chatbot state:', state)
+
+    if (state.isInitializing) {
+      // Actualizar progreso de carga
+      if (loadingProgressBar && loadingProgressBar instanceof HTMLElement) {
+        loadingProgressBar.style.width = `${state.loadProgress}%`
+      }
+      if (loadingProgressText) {
+        loadingProgressText.textContent = `${Math.round(state.loadProgress)}%`
+      }
+    } else if (state.isReady) {
+      // Ocultar mensaje de carga y habilitar input
+      if (loadingElement && loadingElement instanceof HTMLElement) {
+        loadingElement.style.display = 'none'
+      }
+      chatbotInput.disabled = false
+      chatbotSend.disabled = false
+
+      // Mostrar mensaje de bienvenida
+      addChatMessage(
+        'assistant',
+        'Hello! I am your AI assistant. I can help you with questions about your JavaScript/TypeScript code. What can I help you with?',
+      )
+    } else if (state.error) {
+      // Mostrar error
+      if (loadingElement) {
+        loadingElement.innerHTML = `
+          <div class="chatbot-error-message">
+            <strong>Error:</strong> ${state.error}
+          </div>
+        `
+      }
+    }
+  })
+
+  // Inicializar el modelo
+  await chatbot.initialize()
+
+  // Auto-resize del textarea
+  chatbotInput.addEventListener('input', () => {
+    chatbotInput.style.height = 'auto'
+    chatbotInput.style.height = chatbotInput.scrollHeight + 'px'
+  })
+
+  // Enviar mensaje con Enter (Shift+Enter para nueva línea)
+  chatbotInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendChatMessage()
+    }
+  })
+
+  // Enviar mensaje con botón
+  chatbotSend.addEventListener('click', () => {
+    sendChatMessage()
+  })
+
+  // Limpiar conversación
+  chatbotClear.addEventListener('click', () => {
+    chatbot.clearHistory()
+    // Limpiar UI (mantener solo mensaje de bienvenida)
+    if (chatbotMessages) {
+      chatbotMessages.innerHTML = ''
+      addChatMessage(
+        'assistant',
+        'Hello! I am your AI assistant. I can help you with questions about your JavaScript/TypeScript code. What can I help you with?',
+      )
+    }
+  })
+
+  // Función para enviar mensaje
+  async function sendChatMessage() {
+    const message = chatbotInput.value.trim()
+    if (!message || !chatbot.getState().isReady) return
+
+    // Obtener contexto del código y output
+    const code = editor?.getValue() || ''
+    const outputElement = $('#output')
+
+    // Formatear output correctamente para la IA
+    let formattedOutput = ''
+    if (outputElement) {
+      const logEntries = outputElement.querySelectorAll('.log-entry')
+      const outputLines: string[] = []
+
+      logEntries.forEach((entry) => {
+        const contentEl = entry.querySelector('.log-content')
+        const lineNumberEl = entry.querySelector('.log-line-number')
+
+        if (contentEl) {
+          const content = contentEl.textContent?.trim() || ''
+          const lineNumber = lineNumberEl?.textContent?.trim() || ''
+
+          if (lineNumber) {
+            // Formato: contenido (número de línea)
+            outputLines.push(`${content} (${lineNumber})`)
+          } else {
+            outputLines.push(content)
+          }
+        }
+      })
+
+      formattedOutput = outputLines.join('\n')
+    }
+
+    console.log({ code, formattedOutput })
+
+    // Crear mensaje contextual
+    let contextualMessage = message
+    if (code || formattedOutput) {
+      contextualMessage = `Current code:\n\`\`\`javascript\n${code}\n\`\`\`\n\n`
+      if (formattedOutput) {
+        contextualMessage += `Console output:\n\`\`\`\n${formattedOutput}\n\`\`\`\n\n`
+      }
+      contextualMessage += `User question: ${message}`
+    }
+
+    // Mostrar mensaje del usuario
+    addChatMessage('user', message)
+
+    // Limpiar input
+    chatbotInput.value = ''
+    chatbotInput.style.height = 'auto'
+
+    // Deshabilitar input mientras se procesa
+    chatbotInput.disabled = true
+    chatbotSend.disabled = true
+
+    // Mostrar indicador de escritura
+    const typingIndicator = document.createElement('div')
+    typingIndicator.className = 'chatbot-typing-indicator'
+    typingIndicator.innerHTML = '<span></span><span></span><span></span>'
+    chatbotMessages?.appendChild(typingIndicator)
+    chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
+
+    try {
+      // Crear elemento de mensaje del asistente
+      const assistantMessageDiv = document.createElement('div')
+      assistantMessageDiv.className = 'chatbot-message assistant'
+
+      const roleSpan = document.createElement('div')
+      roleSpan.className = 'chatbot-message-role'
+      roleSpan.textContent = 'Asistente'
+
+      const contentDiv = document.createElement('div')
+      contentDiv.className = 'chatbot-message-content'
+      contentDiv.textContent = ''
+
+      assistantMessageDiv.appendChild(roleSpan)
+      assistantMessageDiv.appendChild(contentDiv)
+
+      // Ocultar indicador de escritura y mostrar mensaje
+      typingIndicator.remove()
+      chatbotMessages?.appendChild(assistantMessageDiv)
+
+      // Enviar mensaje y recibir respuesta con streaming
+      await chatbot.sendMessage(contextualMessage, (chunk) => {
+        contentDiv.textContent += chunk
+        chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
+      })
+
+      // Hacer scroll al final
+      chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
+    } catch (error: any) {
+      console.error('Error sending message:', error)
+      typingIndicator.remove()
+      addChatMessage('assistant', `Error: ${error.message}`)
+    } finally {
+      // Rehabilitar input
+      chatbotInput.disabled = false
+      chatbotSend.disabled = false
+      chatbotInput.focus()
+    }
+  }
+
+  // Función auxiliar para añadir mensajes al chat
+  function addChatMessage(role: 'user' | 'assistant', content: string) {
+    if (!chatbotMessages) return
+
+    const messageDiv = document.createElement('div')
+    messageDiv.className = `chatbot-message ${role}`
+
+    const roleSpan = document.createElement('div')
+    roleSpan.className = 'chatbot-message-role'
+    roleSpan.textContent = role === 'user' ? 'Yo' : 'AI Assistant'
+
+    const contentDiv = document.createElement('div')
+    contentDiv.className = 'chatbot-message-content'
+    contentDiv.textContent = content
+
+    messageDiv.appendChild(roleSpan)
+    messageDiv.appendChild(contentDiv)
+
+    chatbotMessages.appendChild(messageDiv)
+    chatbotMessages.scrollTo(0, chatbotMessages.scrollHeight)
   }
 }
 
