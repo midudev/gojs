@@ -5,6 +5,7 @@ import { INITIAL_CODE } from './consts'
 import { loadSettings, updateSetting, calculateLineHeight } from './storage'
 import { initPrettierWorker, formatCode } from './prettier'
 import { injectExpressionLogging } from './console'
+import { initHeaderPopovers } from './popovers'
 
 // Estado de la aplicación
 let editor: any = null
@@ -822,7 +823,6 @@ async function start() {
 
   // Event listener para el botón de settings
   const settingsButton = document.getElementById('settings-button')
-  const issueButton = document.getElementById('issue-button')
   const settingsModal = document.getElementById('settings-modal')
   const closeSettings = document.getElementById('close-settings')
   const modalOverlay = settingsModal?.querySelector('.modal-overlay')
@@ -1027,41 +1027,8 @@ async function start() {
     })
   }
 
-  // Tooltips (Popover API - hint) para botones del header usando implicit anchor
-  const tooltipAutorun = document.getElementById('tooltip-autorun') as HTMLElement | null
-  const tooltipAI = document.getElementById('tooltip-ai') as HTMLElement | null
-  const tooltipSettings = document.getElementById('tooltip-settings') as HTMLElement | null
-  const tooltipIssue = document.getElementById('tooltip-issue') as HTMLElement | null
-
-  const attachHintTooltip = (button: HTMLElement | null, tooltip: HTMLElement | null) => {
-    if (!button || !tooltip) return
-
-    // Mostrar en hover y focus
-    const show = () => (tooltip as any).showPopover({ source: button })
-    const hide = () => tooltip.hidePopover()
-
-    button.addEventListener('mouseover', show)
-    button.addEventListener('mouseout', hide)
-    button.addEventListener('focus', show)
-    button.addEventListener('blur', hide)
-
-    // También recolocar en scroll/resize (por si cambia el layout)
-    window.addEventListener(
-      'scroll',
-      () => {
-        if (tooltip.matches(':popover-open')) (tooltip as any).showPopover({ source: button })
-      },
-      { passive: true },
-    )
-    window.addEventListener('resize', () => {
-      if (tooltip.matches(':popover-open')) (tooltip as any).showPopover({ source: button })
-    })
-  }
-
-  attachHintTooltip(autorunToggleButton as HTMLElement | null, tooltipAutorun)
-  attachHintTooltip(aiToggleButton as HTMLElement | null, tooltipAI)
-  attachHintTooltip(settingsButton as HTMLElement | null, tooltipSettings)
-  attachHintTooltip(issueButton as HTMLElement | null, tooltipIssue)
+  // Inicializar popovers del header
+  initHeaderPopovers()
 
   // Ejecutar código inicial si auto-run está habilitado
   if (autoRunEnabled) {
