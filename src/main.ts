@@ -1,6 +1,7 @@
-import { init } from 'modern-monaco'
 import './style.css'
 import './fonts.css'
+
+import { init } from 'modern-monaco'
 import { INITIAL_CODE } from './consts'
 import { loadSettings, updateSetting, calculateLineHeight } from './storage'
 import { initPrettierWorker, formatCode } from './prettier'
