@@ -1358,6 +1358,7 @@ async function initChatbot() {
   function createThinkingBlock(): HTMLElement {
     const thinkBlock = document.createElement('div')
     thinkBlock.className = 'thinking-block'
+    thinkBlock.dataset.startTime = String(performance.now())
 
     const thinkHeader = document.createElement('div')
     thinkHeader.className = 'thinking-header'
@@ -1385,6 +1386,10 @@ async function initChatbot() {
     thinkLabel.className = 'thinking-label'
     thinkLabel.textContent = 'Thinking...'
 
+    const thinkTime = document.createElement('span')
+    thinkTime.className = 'thinking-time'
+    thinkTime.textContent = ''
+
     const chevronIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     chevronIcon.classList.add('thinking-chevron')
     chevronIcon.setAttribute('width', '14')
@@ -1396,9 +1401,9 @@ async function initChatbot() {
     chevronIcon.setAttribute('stroke-linecap', 'round')
     chevronIcon.setAttribute('stroke-linejoin', 'round')
     chevronIcon.innerHTML = '<path d="M6 9l6 6l6 -6" />'
-
     thinkHeader.appendChild(thinkIcon)
     thinkHeader.appendChild(thinkLabel)
+    thinkLabel.appendChild(thinkTime)
     thinkHeader.appendChild(chevronIcon)
 
     const thinkContent = document.createElement('div')
@@ -1419,15 +1424,21 @@ async function initChatbot() {
   function updateThinkingBlock(thinkBlock: HTMLElement, content: string, isComplete: boolean) {
     const thinkContent = thinkBlock.querySelector('.thinking-content')
     const thinkLabel = thinkBlock.querySelector('.thinking-label')
+    const thinkTime = thinkBlock.querySelector('.thinking-time')
     if (!thinkContent) return
 
     thinkContent.textContent = content
 
     if (isComplete) {
       thinkContent.classList.remove('loading')
-      // Cambiar label a "Thought"
-      if (thinkLabel) {
-        thinkLabel.textContent = 'Thought'
+      // Cambiar label a "(THOUGHT)" y mostrar duración
+      if (thinkLabel && thinkTime) {
+        const startTime = Number(thinkBlock.dataset.startTime || thinkBlock.dataset.createdAt || '0')
+        const durationMs = performance.now() - startTime
+        const durationSeconds = Math.max(0, Math.round(durationMs / 1000))
+        thinkLabel.textContent = '(THOUGHT)'
+        thinkTime.textContent = `${durationSeconds}s`
+        thinkLabel.appendChild(thinkTime)
       }
       // Auto-colapsar cuando está completo
       setTimeout(() => {
@@ -1436,6 +1447,11 @@ async function initChatbot() {
     } else {
       // Mantener expandido mientras se está escribiendo
       thinkBlock.classList.add('expanded')
+      if (thinkLabel && thinkTime) {
+        thinkLabel.textContent = 'Thinking...'
+        thinkTime.textContent = ''
+        thinkLabel.appendChild(thinkTime)
+      }
     }
   }
 
