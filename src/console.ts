@@ -98,7 +98,8 @@ export function injectExpressionLogging(code: string): string {
     // Envolver la expresión para capturar su valor y mostrarlo
     // Quitamos el punto y coma final si existe
     const exprWithoutSemicolon = exprCode.replace(/;$/, '').trim()
-    const injection = `(function() {
+    // Agregar punto y coma al inicio para evitar problemas con clases y declaraciones previas
+    const injection = `;(function() {
       const __expr_result__ = ${exprWithoutSemicolon};
       if (__expr_result__ !== undefined) {
         console.__logExpression__(__expr_result__, ${expr.line});
