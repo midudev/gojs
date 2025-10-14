@@ -1219,7 +1219,7 @@ body {
 /* Loading animation (shimmer effect) */
 .thinking-content.loading {
   position: relative;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .thinking-content.loading::after {
