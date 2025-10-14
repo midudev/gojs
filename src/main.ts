@@ -11,6 +11,7 @@ import { initHeaderPopovers } from './popovers'
 import { initTabs } from './tabs'
 import { $, $$ } from './dom'
 import { chatbot, ChatbotState } from './chatbot'
+import './resize-panels'
 
 // Estado de la aplicación
 let editor: any = null
@@ -50,8 +51,6 @@ async function initEditor() {
   })
 
   // Crear instancia del editor
-  console.log(currentSettings)
-  debugger
   editor = monaco.editor.create(editorElement, {
     value: INITIAL_CODE,
     language: 'javascript',
@@ -746,57 +745,12 @@ function clearEditorHighlight() {
   currentDecorations = editor.deltaDecorations(currentDecorations, [])
 }
 
-// Configurar resize del panel divisor
-function setupResizer() {
-  const divider = $('#divider') as HTMLElement
-  const editorPanel = $('.editor-panel') as HTMLElement
-  const outputPanel = $('.output-panel') as HTMLElement
-
-  let isResizing = false
-  let startX = 0
-  let startWidthEditor = 0
-  let startWidthOutput = 0
-
-  divider.addEventListener('mousedown', (e) => {
-    isResizing = true
-    startX = e.clientX
-    startWidthEditor = editorPanel.offsetWidth
-    startWidthOutput = outputPanel.offsetWidth
-
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  })
-
-  document.addEventListener('mousemove', (e) => {
-    if (!isResizing) return
-
-    const delta = e.clientX - startX
-    const newEditorWidth = startWidthEditor + delta
-    const newOutputWidth = startWidthOutput - delta
-
-    // Límites mínimos
-    if (newEditorWidth < 300 || newOutputWidth < 300) return
-
-    editorPanel.style.flex = `0 0 ${newEditorWidth}px`
-    outputPanel.style.flex = `0 0 ${newOutputWidth}px`
-  })
-
-  document.addEventListener('mouseup', () => {
-    if (isResizing) {
-      isResizing = false
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-  })
-}
-
 // Inicializar aplicación
 async function start() {
   // Inicializar Prettier worker
   initPrettierWorker()
 
   await initEditor()
-  setupResizer()
 
   // Event listener para el botón de auto-run toggle
   const autorunToggleButton = $('#autorun-toggle-button') as HTMLElement
@@ -827,10 +781,16 @@ async function start() {
   const robotIcon = document.getElementById('robot-icon')
   const robotOffIcon = document.getElementById('robot-off-icon')
   const chatbotPanel = document.getElementById('chatbot-panel')
-  const chatbotDivider = document.getElementById('chatbot-divider')
-  let aiEnabled = false
+  let aiEnabled = true
 
-  if (aiToggleButton && robotIcon && robotOffIcon && chatbotPanel && chatbotDivider) {
+  if (aiToggleButton && robotIcon && robotOffIcon && chatbotPanel) {
+    // Configurar el estado inicial de la IA (habilitada por defecto)
+    robotIcon.style.display = 'block'
+    robotOffIcon.style.display = 'none'
+    aiToggleButton.title = 'IA activada (click para desactivar)'
+    chatbotPanel.style.display = 'flex'
+    chatbotPanel.classList.remove('hidden')
+
     aiToggleButton.addEventListener('click', () => {
       aiEnabled = !aiEnabled
 
@@ -840,7 +800,7 @@ async function start() {
         robotOffIcon.style.display = 'none'
         aiToggleButton.title = 'IA activada (click para desactivar)'
         chatbotPanel.style.display = 'flex'
-        chatbotDivider.style.display = 'block'
+        chatbotPanel.classList.remove('hidden')
 
         // Inicializar el chatbot cuando se activa
         initChatbot()
@@ -848,9 +808,11 @@ async function start() {
         robotIcon.style.display = 'none'
         robotOffIcon.style.display = 'block'
         aiToggleButton.title = 'IA desactivada (click para activar)'
-        chatbotPanel.style.display = 'none'
-        chatbotDivider.style.display = 'none'
+        chatbotPanel.classList.add('hidden')
       }
+
+      // Redistribuir el espacio entre los paneles restantes
+      redistributePanelSpace()
     })
   }
 
@@ -1063,9 +1025,22 @@ async function start() {
   // Inicializar popovers del header
   initHeaderPopovers()
 
+  // Inicializar el chatbot automáticamente (fuera del bloque condicional)
+  initChatbot()
+
   // Ejecutar código inicial si auto-run está habilitado
   if (autoRunEnabled) {
     runCode()
+  }
+}
+
+// Función para redistribuir el espacio entre paneles
+function redistributePanelSpace() {
+  const resizePanelsElement = document.querySelector('resize-panels')
+  if (!resizePanelsElement) return
+
+  if (typeof (resizePanelsElement as any).requestLayoutUpdate === 'function') {
+    ;(resizePanelsElement as any).requestLayoutUpdate()
   }
 }
 

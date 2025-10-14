@@ -213,6 +213,7 @@ body {
   flex-direction: column;
   min-height: 0;
   background-color: var(--color-bg-primary);
+  height: 100%;
 }
 
 .editor-panel {
@@ -834,10 +835,11 @@ body {
   display: flex;
   flex-direction: column;
   min-width: 350px;
-  max-width: 450px;
-  width: 100%;
   background-color: var(--editor-background, var(--color-bg-primary));
-  flex-shrink: 0;
+}
+
+.chatbot-panel.hidden {
+  display: none !important;
 }
 
 .chatbot-header {
@@ -1208,18 +1210,14 @@ body {
   transition: all 0.3s ease;
   white-space: pre-wrap;
   word-wrap: break-word;
+  overflow-x: hidden;
+  position: relative;
 }
 
 .thinking-block.expanded .thinking-content {
   max-height: 500px;
   padding: 12px;
   overflow-y: auto;
-}
-
-/* Loading animation (shimmer effect) */
-.thinking-content.loading {
-  position: relative;
-  overflow: visible;
 }
 
 .thinking-content.loading::after {

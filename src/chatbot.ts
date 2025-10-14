@@ -72,11 +72,32 @@ class Chatbot {
     this.notifyStateChange()
 
     try {
+      // Variable para simular progreso cuando el callback devuelve 0
+      let simulatedProgress = 0
+
       // Crear el motor con el modelo específico
-      this.engine = await CreateMLCEngine('Qwen3-0.6B-q4f32_1-MLC', {
-        initProgressCallback: (progress) => {
-          console.log('Loading progress:', progress)
-          this.state.loadProgress = progress.progress || 0
+      this.engine = await CreateMLCEngine('Qwen3-4B-q4f16_1-MLC', {
+        initProgressCallback: (report) => {
+          console.log('Loading progress:', report)
+          // El progreso viene como decimal (0-1), convertir a porcentaje (0-100)
+          const reportedProgress = (report.progress ?? 0) * 100
+
+          // Si el progreso reportado es 0, simular un pequeño avance
+          if (reportedProgress === 0) {
+            simulatedProgress = Math.min(simulatedProgress + 0.5, 95)
+            this.state.loadProgress = simulatedProgress
+          }
+          // Si el progreso reportado es menor que el simulado, ignorar (no retroceder)
+          else if (reportedProgress < simulatedProgress) {
+            // Mantener el progreso simulado actual
+            return
+          }
+          // Si el progreso reportado es mayor, usarlo y actualizar la simulación
+          else {
+            simulatedProgress = reportedProgress
+            this.state.loadProgress = reportedProgress
+          }
+
           this.notifyStateChange()
         },
       })
