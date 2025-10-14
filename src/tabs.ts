@@ -20,7 +20,7 @@ type TabsState = {
 const STORAGE_TABS = 'xjs.tabs'
 const STORAGE_ACTIVE = 'xjs.activeTabId'
 
-let state: TabsState = { tabs: [], activeId: null }
+export let state: TabsState = { tabs: [], activeId: null }
 let editor: EditorLike | null = null
 let monaco: MonacoLike | null = null
 let onTabActivated: (() => void) | null = null
