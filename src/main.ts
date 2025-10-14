@@ -11,6 +11,7 @@ import { initHeaderPopovers } from './popovers'
 import { initTabs } from './tabs'
 import { $, $$ } from './dom'
 import { chatbot, ChatbotState } from './chatbot'
+import './keyboard-events'
 import './resize-panels'
 
 // Estado de la aplicación
