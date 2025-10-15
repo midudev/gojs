@@ -1,7 +1,8 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@import "tailwindcss";
+@source "../node_modules/streamdown/dist/index.js";
+
+hr {
+  opacity: .1;
 }
 
 :root {
@@ -942,7 +943,9 @@ body {
 }
 
 .chatbot-message-content {
-  padding: 10px 14px;
+  background: transparent;
+  color: white;
+  border: 0;
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.5;
@@ -951,18 +954,15 @@ body {
 }
 
 .chatbot-message.user .chatbot-message-content {
-  background-color: var(--theme-mtk14, var(--color-accent));
-  color: white;
+  background-color: rgba(255, 255, 255, .1);
   align-self: flex-end;
   max-width: 80%;
-  border-bottom-right-radius: 2px;
+  border-radius: 5000px;
+  border: 1px solid var(--color-border);
+  padding: 8px 14px;
 }
 
 .chatbot-message.assistant .chatbot-message-content {
-  background-color: var(--color-bg-secondary);
-  color: var(--color-text-primary);
-  border: 1px solid var(--color-border);
-  border-bottom-left-radius: 2px;
 }
 
 .chatbot-message.assistant .chatbot-message-role {

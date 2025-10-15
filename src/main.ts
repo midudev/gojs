@@ -2,7 +2,6 @@ import './style.css'
 import './fonts.css'
 
 import { init } from 'modern-monaco'
-import { render as renderShiki } from 'modern-monaco/shiki'
 import { INITIAL_CODE } from './consts'
 import { loadSettings, updateSetting, calculateLineHeight } from './storage'
 import { initPrettierWorker, formatCode } from './prettier'
@@ -13,6 +12,9 @@ import { $, $$ } from './dom'
 import { chatbot, ChatbotState } from './chatbot'
 import './keyboard-events'
 import './resize-panels'
+import { createRoot } from 'react-dom/client'
+import { ChatResponse } from './ChatResponse'
+import React from 'react'
 
 // Estado de la aplicación
 let editor: any = null
@@ -1225,6 +1227,7 @@ async function initChatbot() {
       let regularContent = ''
       let thinkBlock: HTMLElement | null = null
       let contentDiv: HTMLElement | null = null
+      let reactRoot: any = null
 
       // Enviar mensaje y recibir respuesta con streaming
       await chatbot.sendMessage(contextualMessage, (chunk) => {
@@ -1264,15 +1267,20 @@ async function initChatbot() {
           // Crear div para contenido regular si no existe
           if (!contentDiv) {
             contentDiv = document.createElement('div')
-            contentDiv.className = 'chatbot-message-content'
             assistantMessageDiv.appendChild(contentDiv)
+            reactRoot = createRoot(contentDiv)
           }
 
           regularContent = afterClose
-          // Procesar código markdown y actualizar contenido
-          processMarkdownCode(regularContent).then((processed) => {
-            contentDiv!.innerHTML = processed
-          })
+          // Renderizar con React usando Streamdown
+          if (reactRoot) {
+            reactRoot.render(
+              React.createElement(ChatResponse, {
+                content: regularContent,
+                isStreaming: false,
+              }),
+            )
+          }
         } else if (isInThinkTag) {
           // Actualizar contenido de think
           const parts = fullContent.split('<think>')
@@ -1286,31 +1294,33 @@ async function initChatbot() {
           // Actualizar contenido regular
           if (!contentDiv) {
             contentDiv = document.createElement('div')
-            contentDiv.className = 'chatbot-message-content'
             assistantMessageDiv.appendChild(contentDiv)
+            reactRoot = createRoot(contentDiv)
           }
 
           // Si no hay think tag, mostrar todo
           if (!fullContent.includes('<think>')) {
-            // Procesar markdown si hay código
-            if (fullContent.includes('```')) {
-              processMarkdownCode(fullContent).then((processed) => {
-                contentDiv!.innerHTML = processed
-              })
-            } else {
-              contentDiv.textContent = fullContent
+            // Renderizar con React usando Streamdown
+            if (reactRoot) {
+              reactRoot.render(
+                React.createElement(ChatResponse, {
+                  content: fullContent,
+                  isStreaming: true,
+                }),
+              )
             }
           } else {
             // Ya pasó el think tag, mostrar solo la parte después de </think>
             const parts = fullContent.split('</think>')
             if (parts.length > 1) {
               const content = parts[1]
-              if (content.includes('```')) {
-                processMarkdownCode(content).then((processed) => {
-                  contentDiv!.innerHTML = processed
-                })
-              } else {
-                contentDiv.textContent = content
+              if (reactRoot) {
+                reactRoot.render(
+                  React.createElement(ChatResponse, {
+                    content: content,
+                    isStreaming: true,
+                  }),
+                )
               }
             }
           }
@@ -1432,14 +1442,20 @@ async function initChatbot() {
 
     if (isComplete) {
       thinkContent.classList.remove('loading')
-      // Cambiar label a "(THOUGHT)" y mostrar duración
+      // Detener el intervalo si existe
+      const intervalId = thinkBlock.dataset.intervalId
+      if (intervalId) {
+        clearInterval(Number(intervalId))
+        delete thinkBlock.dataset.intervalId
+      }
+      // Cambiar label a "THOUGHT" y mostrar duración final
       if (thinkLabel && thinkTime) {
-        const startTime = Number(thinkBlock.dataset.startTime || thinkBlock.dataset.createdAt || '0')
-        const durationMs = performance.now() - startTime
+        const startTime = Number(thinkBlock.dataset.startTime || '0')
+        const endTime = performance.now()
+        const durationMs = endTime - startTime
         const durationSeconds = Math.max(0, Math.round(durationMs / 1000))
-        thinkLabel.textContent = '(THOUGHT)'
+        thinkLabel.textContent = 'THOUGHT '
         thinkTime.textContent = `${durationSeconds}s`
-        thinkLabel.appendChild(thinkTime)
       }
       // Auto-colapsar cuando está completo
       setTimeout(() => {
@@ -1449,42 +1465,25 @@ async function initChatbot() {
       // Mantener expandido mientras se está escribiendo
       thinkBlock.classList.add('expanded')
       if (thinkLabel && thinkTime) {
-        thinkLabel.textContent = 'Thinking...'
-        thinkTime.textContent = ''
-        thinkLabel.appendChild(thinkTime)
+        const startTime = Number(thinkBlock.dataset.startTime || '0')
+        
+        // Si no hay intervalo activo, crear uno
+        if (!thinkBlock.dataset.intervalId) {
+          const intervalId = setInterval(() => {
+            const currentTime = performance.now()
+            const durationMs = currentTime - startTime
+            const durationSeconds = Math.max(0, Math.round(durationMs / 1000))
+            thinkLabel.textContent = 'Thinking... '
+            thinkTime.textContent = `${durationSeconds}s`
+          }, 100) // Actualizar cada 100ms
+          
+          thinkBlock.dataset.intervalId = String(intervalId)
+        }
       }
     }
   }
 
   // Procesar código markdown en el contenido
-  async function processMarkdownCode(content: string): Promise<string> {
-    // Detectar bloques de código ```lang\ncode\n```
-    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g
-    let processedContent = content
-    const matches = Array.from(content.matchAll(codeBlockRegex))
-
-    for (const match of matches) {
-      const lang = match[1] || 'javascript'
-      const code = match[2]
-
-      try {
-        // Usar shiki para renderizar el código
-        const highlighted = await renderShiki(code, {
-          lang,
-          theme: currentSettings.theme,
-        })
-
-        // Reemplazar el bloque con el HTML resaltado
-        processedContent = processedContent.replace(match[0], `<div class="code-block">${highlighted}</div>`)
-      } catch (error) {
-        console.error('Error highlighting code:', error)
-        // Si falla, mantener el código sin resaltar
-        processedContent = processedContent.replace(match[0], `<pre class="code-block"><code>${code}</code></pre>`)
-      }
-    }
-
-    return processedContent
-  }
 }
 
 // Iniciar cuando el DOM esté listo
