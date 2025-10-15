@@ -1466,7 +1466,7 @@ async function initChatbot() {
       if (!thinkBlock.dataset.intervalId) {
         thinkBlock.classList.add('expanded')
       }
-      
+
       if (thinkLabel && thinkTime) {
         const startTime = Number(thinkBlock.dataset.startTime || '0')
 
