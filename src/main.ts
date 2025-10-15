@@ -1466,7 +1466,7 @@ async function initChatbot() {
       thinkBlock.classList.add('expanded')
       if (thinkLabel && thinkTime) {
         const startTime = Number(thinkBlock.dataset.startTime || '0')
-        
+
         // Si no hay intervalo activo, crear uno
         if (!thinkBlock.dataset.intervalId) {
           const intervalId = setInterval(() => {
@@ -1476,7 +1476,7 @@ async function initChatbot() {
             thinkLabel.textContent = 'Thinking... '
             thinkTime.textContent = `${durationSeconds}s`
           }, 100) // Actualizar cada 100ms
-          
+
           thinkBlock.dataset.intervalId = String(intervalId)
         }
       }
