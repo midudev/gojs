@@ -1414,7 +1414,7 @@ async function initChatbot() {
     chevronIcon.innerHTML = '<path d="M6 9l6 6l6 -6" />'
     thinkHeader.appendChild(thinkIcon)
     thinkHeader.appendChild(thinkLabel)
-    thinkLabel.appendChild(thinkTime)
+    thinkHeader.appendChild(thinkTime)
     thinkHeader.appendChild(chevronIcon)
 
     const thinkContent = document.createElement('div')
@@ -1462,8 +1462,11 @@ async function initChatbot() {
         thinkBlock.classList.remove('expanded')
       }, 1000)
     } else {
-      // Mantener expandido mientras se está escribiendo
-      thinkBlock.classList.add('expanded')
+      // Expandir solo la primera vez, después respetar la decisión del usuario
+      if (!thinkBlock.dataset.intervalId) {
+        thinkBlock.classList.add('expanded')
+      }
+      
       if (thinkLabel && thinkTime) {
         const startTime = Number(thinkBlock.dataset.startTime || '0')
 
