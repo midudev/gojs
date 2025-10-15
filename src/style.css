@@ -5,6 +5,10 @@ hr {
   opacity: .1;
 }
 
+div[data-code-block-container="true"], div[data-code-block="true"] {
+  border-color: rgba(255, 255, 255, .1);
+}
+
 :root {
   --color-bg-primary: #1e1e1e;
   --color-bg-secondary: #252525;
