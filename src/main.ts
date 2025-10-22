@@ -493,9 +493,9 @@ async function runCode() {
         addLog(
           'error',
           null,
-          `⏱️ Ejecución detenida: el código superó el límite de tiempo (${EXECUTION_TIMEOUT / 1000}s)`,
+          `⏱️ Execution stopped: the code exceeded the timeout limit (${EXECUTION_TIMEOUT / 1000}s)`,
         )
-        addLog('warn', null, 'Posible loop infinito o código que tarda demasiado en ejecutarse')
+        addLog('warn', null, 'Possible infinite loop or code that takes too long to execute')
 
         // Terminar el worker inmediatamente (esto SÍ detiene loops síncronos)
         if (executorWorker) {
