@@ -15,6 +15,8 @@ import './resize-panels'
 import { createRoot } from 'react-dom/client'
 import { ChatResponse } from './ChatResponse'
 import React from 'react'
+// @ts-ignore
+import ExecutorWorker from './executor-worker?worker'
 
 // Estado de la aplicación
 let editor: any = null
@@ -22,8 +24,11 @@ let monaco: any = null
 let autoRunEnabled = true
 let debounceTimer: number | null = null
 let currentDecorations: any[] = [] // Para guardar las decoraciones activas
-const timers: Map<string, number> = new Map() // Para console.time
-const counters: Map<string, number> = new Map() // Para console.count
+
+// Web Worker para ejecución de código con timeout
+let executorWorker: Worker | null = null
+let executionTimeoutId: number | null = null // Timer del hilo principal para timeout
+const EXECUTION_TIMEOUT = 2000 // 2 segundos de timeout por defecto
 
 let currentSettings = loadSettings()
 
@@ -302,6 +307,23 @@ async function formatEditorCode() {
   }
 }
 
+// Inicializar o reiniciar el worker
+function initExecutorWorker() {
+  // Limpiar timeout anterior si existe
+  if (executionTimeoutId !== null) {
+    clearTimeout(executionTimeoutId)
+    executionTimeoutId = null
+  }
+
+  // Terminar worker anterior si existe
+  if (executorWorker) {
+    executorWorker.terminate()
+  }
+
+  // Crear nuevo worker
+  executorWorker = new ExecutorWorker()
+}
+
 // Ejecutar código
 async function runCode() {
   if (!editor) return
@@ -318,7 +340,7 @@ async function runCode() {
   outputElement.innerHTML = ''
 
   const addLog = (
-    type: 'log' | 'info' | 'warn' | 'error' | 'time' | 'table' | 'count' | 'expression',
+    type: 'log' | 'info' | 'warn' | 'error' | 'time' | 'table' | 'count' | 'expression' | 'timeout',
     lineNumber: number | null,
     data?: any,
     columns?: string[],
@@ -331,7 +353,6 @@ async function runCode() {
       const typeSpan = document.createElement('span')
       typeSpan.className = 'log-type'
       typeSpan.textContent = type
-
       entry.appendChild(typeSpan)
     }
 
@@ -344,8 +365,9 @@ async function runCode() {
       contentSpan.className = 'log-content'
 
       // Formatear el contenido con syntax highlighting
-      if (Array.isArray(data)) {
-        // Múltiples argumentos
+      // Para expresiones, el array ES el valor (no múltiples argumentos)
+      if (Array.isArray(data) && type !== 'expression') {
+        // Múltiples argumentos de console.log, console.info, etc.
         data.forEach((arg, index) => {
           if (index > 0) {
             contentSpan.appendChild(document.createTextNode(' '))
@@ -353,7 +375,7 @@ async function runCode() {
           appendFormattedValue(contentSpan, arg)
         })
       } else {
-        // Un solo argumento
+        // Un solo valor (o una expresión que devuelve un array)
         appendFormattedValue(contentSpan, data)
       }
 
@@ -388,118 +410,111 @@ async function runCode() {
     outputElement.appendChild(entry)
   }
 
-  // Preparar funciones de console personalizadas
-  const customConsole = {
-    log: (...args: any[]) => {
-      const stack = new Error().stack || ''
-      const lineNumber = extractLineNumber(stack)
-      addLog('log', lineNumber, args.length === 1 ? args[0] : args)
-    },
-    info: (...args: any[]) => {
-      const stack = new Error().stack || ''
-      const lineNumber = extractLineNumber(stack)
-      addLog('info', lineNumber, args.length === 1 ? args[0] : args)
-    },
-    warn: (...args: any[]) => {
-      const stack = new Error().stack || ''
-      const lineNumber = extractLineNumber(stack)
-      addLog('warn', lineNumber, args.length === 1 ? args[0] : args)
-    },
-    error: (...args: any[]) => {
-      const stack = new Error().stack || ''
-      const lineNumber = extractLineNumber(stack)
-      addLog('error', lineNumber, args.length === 1 ? args[0] : args)
-    },
-    time: (label: string = 'default') => {
-      timers.set(label, performance.now())
-    },
-    timeEnd: (label: string = 'default') => {
-      const startTime = timers.get(label)
-      if (startTime === undefined) {
-        addLog('warn', null, `Timer '${label}' does not exist`)
-        return
-      }
-      const duration = performance.now() - startTime
-      timers.delete(label)
-
-      const stack = new Error().stack || ''
-      const lineNumber = extractLineNumber(stack)
-      addLog('time', lineNumber, `${label}: ${duration.toFixed(3)}ms`)
-    },
-    table: (data: any, columns?: string[]) => {
-      const stack = new Error().stack || ''
-      const lineNumber = extractLineNumber(stack)
-      addLog('table', lineNumber, data, columns)
-    },
-    count: (label: string = 'default') => {
-      const currentCount = counters.get(label) || 0
-      const newCount = currentCount + 1
-      counters.set(label, newCount)
-
-      const stack = new Error().stack || ''
-      const lineNumber = extractLineNumber(stack)
-      addLog('count', lineNumber, `${label}: ${newCount}`)
-    },
-    countReset: (label: string = 'default') => {
-      counters.delete(label)
-    },
-    __logExpression__: (value: any, lineNumber: number) => {
-      addLog('expression', lineNumber, value)
-    },
-  }
-
-  // Función auxiliar para extraer número de línea
-  function extractLineNumber(stack: string): number | null {
-    const lines = stack.split('\n')
-
-    // DEBUG: descomentar para ver el stack completo
-    // console.log('STACK:', stack)
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-
-      // Buscar patrones comunes de stack trace
-      // Chrome/V8: "at eval (eval at <anonymous>, <anonymous>:4:1)"
-      // Firefox: "@eval line 4 > eval:4:1"
-      const chromeMatch = line.match(/<anonymous>:(\d+):\d+\)?$/)
-      const firefoxMatch = line.match(/eval:(\d+):\d+/)
-
-      const match = chromeMatch || firefoxMatch
-
-      if (match && i > 0) {
-        // Ignorar la primera línea (es el Error() mismo)
-        const rawLineNum = Number(match[1])
-
-        // Usar el lineMap para mapear de vuelta a la línea original
-        const mappedLine = lineMap.get(rawLineNum)
-        if (mappedLine) {
-          return mappedLine > 0 ? mappedLine - 1 : null
-        }
-
-        // Fallback: restar 1 por el wrapper de AsyncFunction
-        const lineNum = rawLineNum - 1
-
-        return lineNum > 0 ? lineNum : null
-      }
-    }
-
-    return null
-  }
-
   try {
     // Inyectar logging de expresiones en el código
     const modifiedCode = injectExpressionLogging(code)
 
-    // Ejecutar código en un contexto aislado con console personalizado
-    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-    const fn = new AsyncFunction('console', modifiedCode)
+    // Inicializar worker si no existe
+    if (!executorWorker) {
+      initExecutorWorker()
+    }
 
-    // Ejecutar y manejar promesas, pasando el console personalizado
-    Promise.resolve(fn(customConsole)).catch((error) => {
-      addLog('error', null, `Error: ${error.message}`)
-      if (error.stack) {
-        addLog('error', null, error.stack)
+    // Configurar manejo de mensajes del worker
+    executorWorker!.onmessage = (e: MessageEvent) => {
+      const message = e.data
+
+      switch (message.type) {
+        case 'log':
+        case 'info':
+        case 'warn':
+        case 'time':
+        case 'count':
+        case 'expression':
+          addLog(message.type, message.lineNumber, message.data)
+          break
+
+        case 'error':
+          // Limpiar timeout cuando hay un error
+          if (executionTimeoutId !== null) {
+            clearTimeout(executionTimeoutId)
+            executionTimeoutId = null
+          }
+
+          // Diferenciar entre error de ejecución (con message/stack) y console.error (con data)
+          if (message.message) {
+            // Error de ejecución del worker
+            addLog('error', null, `Error: ${message.message}`)
+            if (message.stack) {
+              addLog('error', null, message.stack)
+            }
+          } else {
+            // console.error del usuario
+            addLog('error', message.lineNumber, message.data)
+          }
+          break
+
+        case 'table':
+          addLog('table', message.lineNumber, message.data, message.columns)
+          break
+
+        case 'complete':
+          // Limpiar timeout cuando la ejecución termina exitosamente
+          if (executionTimeoutId !== null) {
+            clearTimeout(executionTimeoutId)
+            executionTimeoutId = null
+          }
+          break
       }
+    }
+
+    // Manejar errores del worker
+    executorWorker!.onerror = (error) => {
+      // Limpiar timeout
+      if (executionTimeoutId !== null) {
+        clearTimeout(executionTimeoutId)
+        executionTimeoutId = null
+      }
+
+      addLog('error', null, `Error del worker: ${error.message}`)
+      // Reiniciar el worker
+      initExecutorWorker()
+    }
+
+    // Convertir lineMap a objeto plano para enviar al worker
+    const lineMapObj: Record<number, number> = {}
+    lineMap.forEach((value, key) => {
+      lineMapObj[key] = value
+    })
+
+    // Configurar timeout desde el hilo principal (esto SÍ puede detener loops síncronos)
+    if (EXECUTION_TIMEOUT > 0) {
+      executionTimeoutId = window.setTimeout(() => {
+        // Mostrar mensaje de timeout
+        addLog(
+          'error',
+          null,
+          `⏱️ Ejecución detenida: el código superó el límite de tiempo (${EXECUTION_TIMEOUT / 1000}s)`,
+        )
+        addLog('warn', null, 'Posible loop infinito o código que tarda demasiado en ejecutarse')
+
+        // Terminar el worker inmediatamente (esto SÍ detiene loops síncronos)
+        if (executorWorker) {
+          executorWorker.terminate()
+          executorWorker = null
+        }
+
+        // Reiniciar el worker para la próxima ejecución
+        initExecutorWorker()
+
+        executionTimeoutId = null
+      }, EXECUTION_TIMEOUT)
+    }
+
+    // Enviar código al worker para su ejecución
+    executorWorker!.postMessage({
+      type: 'execute',
+      code: modifiedCode,
+      lineMap: lineMapObj,
     })
   } catch (error: any) {
     addLog('error', null, `Error de sintaxis: ${error.message}`)
@@ -511,6 +526,32 @@ async function runCode() {
 
 // Añadir valor formateado al contenedor con syntax highlighting
 function appendFormattedValue(container: HTMLElement, value: any) {
+  // Manejar valores serializados especiales del worker (promesas, funciones, etc.)
+  if (value && typeof value === 'object' && value.__type) {
+    const span = document.createElement('span')
+
+    switch (value.__type) {
+      case 'Promise':
+        span.className = 'log-promise'
+        span.textContent = value.__value
+        break
+      case 'Function':
+        span.className = 'log-function'
+        span.textContent = value.__value
+        break
+      case 'Object':
+      case 'Unknown':
+        span.className = 'log-object'
+        span.textContent = value.__value
+        break
+      default:
+        span.textContent = String(value.__value || value)
+    }
+
+    container.appendChild(span)
+    return
+  }
+
   if (value === null) {
     const span = document.createElement('span')
     span.className = 'log-null'
@@ -542,17 +583,45 @@ function appendFormattedValue(container: HTMLElement, value: any) {
     span.textContent = value.toString()
     container.appendChild(span)
   } else if (typeof value === 'object') {
-    try {
-      const json = JSON.stringify(value, null, 2)
-      const pre = document.createElement('pre')
-      pre.className = 'log-object'
-      pre.innerHTML = syntaxHighlightJSON(json)
-      container.appendChild(pre)
-    } catch {
+    // Manejar arrays de forma especial para mostrarlos en formato compacto
+    if (Array.isArray(value)) {
       const span = document.createElement('span')
-      span.className = 'log-object'
-      span.textContent = String(value)
+      span.className = 'log-array'
+      span.textContent = '['
+
+      value.forEach((item, index) => {
+        if (index > 0) {
+          span.appendChild(document.createTextNode(', '))
+        }
+
+        // Crear un span temporal para obtener el valor formateado
+        const tempSpan = document.createElement('span')
+        appendFormattedValue(tempSpan, item)
+
+        // Si el item es un objeto complejo, usar JSON compacto
+        if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+          tempSpan.textContent = JSON.stringify(item)
+        }
+
+        span.appendChild(tempSpan)
+      })
+
+      span.appendChild(document.createTextNode(']'))
       container.appendChild(span)
+    } else {
+      // Objetos normales (no arrays)
+      try {
+        const json = JSON.stringify(value, null, 2)
+        const pre = document.createElement('pre')
+        pre.className = 'log-object'
+        pre.innerHTML = syntaxHighlightJSON(json)
+        container.appendChild(pre)
+      } catch {
+        const span = document.createElement('span')
+        span.className = 'log-object'
+        span.textContent = String(value)
+        container.appendChild(span)
+      }
     }
   } else {
     container.appendChild(document.createTextNode(String(value)))

@@ -1,12 +1,13 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 @source "../node_modules/streamdown/dist/index.js";
 
 hr {
-  opacity: .1;
+  opacity: 0.1;
 }
 
-div[data-code-block-container="true"], div[data-code-block="true"] {
-  border-color: rgba(255, 255, 255, .1);
+div[data-code-block-container='true'],
+div[data-code-block='true'] {
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 :root {
@@ -422,6 +423,15 @@ body {
 .log-function {
   color: var(--theme-function, #dcdcaa);
   font-style: italic;
+}
+
+.log-promise {
+  color: var(--theme-keyword, #569cd6);
+  font-style: italic;
+}
+
+.log-array {
+  color: var(--color-text-primary);
 }
 
 .log-object {
@@ -958,7 +968,7 @@ body {
 }
 
 .chatbot-message.user .chatbot-message-content {
-  background-color: rgba(255, 255, 255, .1);
+  background-color: rgba(255, 255, 255, 0.1);
   align-self: flex-end;
   max-width: 80%;
   border-radius: 5000px;
