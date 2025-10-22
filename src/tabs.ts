@@ -5,6 +5,7 @@ type EditorLike = any
 
 type Tab = {
   id: string
+  name?: string // Nombre personalizado de la pestaña
   content: string
   isDirty: boolean
   createdAt: number
@@ -106,6 +107,12 @@ function render() {
       closeTab(t.id)
     })
 
+    // Doble clic en el nombre para editar
+    nameEl.addEventListener('dblclick', (e) => {
+      e.stopPropagation()
+      startEditingTabName(t, nameEl)
+    })
+
     list.appendChild(tabEl)
   })
 
@@ -117,6 +124,63 @@ function render() {
 
   container.appendChild(list)
   container.appendChild(addBtn)
+}
+
+function startEditingTabName(tab: Tab, nameEl: HTMLSpanElement) {
+  const currentName = nameEl.textContent || ''
+
+  // Crear input para editar
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'tab-name-input'
+  input.value = tab.name || ''
+  input.placeholder = 'Nombre de la pestaña'
+
+  // Reemplazar el span con el input
+  nameEl.style.display = 'none'
+  nameEl.parentElement?.insertBefore(input, nameEl)
+
+  // Enfocar y seleccionar todo el texto
+  input.focus()
+  input.select()
+
+  const finishEditing = (save: boolean) => {
+    if (save && input.value.trim()) {
+      // Guardar el nuevo nombre
+      tab.name = input.value.trim()
+      tab.updatedAt = Date.now()
+      saveState()
+    } else if (save && !input.value.trim()) {
+      // Si se vacía, eliminar el nombre personalizado
+      delete tab.name
+      tab.updatedAt = Date.now()
+      saveState()
+    }
+
+    // Volver a renderizar
+    render()
+  }
+
+  // Guardar con Enter
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      finishEditing(true)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      finishEditing(false)
+    }
+  })
+
+  // Guardar al perder foco
+  input.addEventListener('blur', () => {
+    finishEditing(true)
+  })
+
+  // Prevenir que el clic en el input cambie de pestaña
+  input.addEventListener('click', (e) => {
+    e.stopPropagation()
+  })
 }
 
 function setActiveModel() {
@@ -145,6 +209,13 @@ export function newTab() {
 }
 
 function getTabTitle(t: Tab): string {
+  // Si tiene nombre personalizado, usarlo
+  if (t.name) {
+    const max = 24
+    return t.name.length > max ? t.name.slice(0, max - 1) + '…' : t.name
+  }
+
+  // Si no, usar primera línea del código (comportamiento por defecto)
   const text = t.model ? t.model.getValue() : t.content
   const firstLine = (text.split('\n')[0] || '').trim()
   if (!firstLine) return 'untitled'

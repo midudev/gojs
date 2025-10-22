@@ -121,6 +121,23 @@ body {
   font-size: 14px;
 }
 
+.tab-name-input {
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--color-accent);
+  color: var(--color-text-primary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  outline: none;
+  font-family: var(--font-sans);
+  min-width: 80px;
+  max-width: 200px;
+}
+
+.tab-name-input:focus {
+  background: rgba(255, 255, 255, 0.15);
+}
+
 .tab-close {
   opacity: 0.6;
   line-height: 1;
