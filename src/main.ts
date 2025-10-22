@@ -1139,8 +1139,6 @@ async function initChatbot() {
 
   // Configurar listener de estado
   chatbot.setStateChangeListener((state: ChatbotState) => {
-    console.log('Chatbot state:', state)
-
     if (state.isInitializing) {
       // Actualizar progreso de carga
       if (loadingProgressBar && loadingProgressBar instanceof HTMLElement) {
@@ -1243,8 +1241,6 @@ async function initChatbot() {
 
       formattedOutput = outputLines.join('\n')
     }
-
-    console.log({ code, formattedOutput })
 
     // Crear mensaje contextual
     let contextualMessage = message

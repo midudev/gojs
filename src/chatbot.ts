@@ -78,7 +78,6 @@ class Chatbot {
       // Crear el motor con el modelo específico
       this.engine = await CreateMLCEngine('Qwen3-4B-q4f16_1-MLC', {
         initProgressCallback: (report) => {
-          console.log('Loading progress:', report)
           // El progreso viene como decimal (0-1), convertir a porcentaje (0-100)
           const reportedProgress = (report.progress ?? 0) * 100
 
@@ -116,8 +115,6 @@ class Chatbot {
       this.state.isReady = true
       this.state.loadProgress = 100
       this.notifyStateChange()
-
-      console.log('Chatbot initialized successfully')
     } catch (error: any) {
       this.state.isInitializing = false
       this.state.isReady = false
