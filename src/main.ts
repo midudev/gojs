@@ -339,7 +339,7 @@ async function runCode() {
   }
 
   const code = editor.getValue()
-  
+
   // Verificar si el código es el mismo que se ejecutó anteriormente
   if (code === lastExecutedCode) {
     console.log('Código sin cambios, ignorando ejecución')
@@ -528,7 +528,7 @@ async function runCode() {
       code: modifiedCode,
       lineMap: lineMapObj,
     })
-    
+
     // Guardar el código que acabamos de ejecutar
     lastExecutedCode = code
   } catch (error: any) {
