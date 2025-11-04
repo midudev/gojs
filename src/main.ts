@@ -329,8 +329,6 @@ function initExecutorWorker() {
 
 // Ejecutar código
 async function runCode() {
-  console.log('runCode')
-
   if (!editor) return
 
   // Si auto-format está activado, formatear antes de ejecutar
@@ -342,7 +340,6 @@ async function runCode() {
 
   // Verificar si el código es el mismo que se ejecutó anteriormente
   if (code === lastExecutedCode) {
-    console.log('Código sin cambios, ignorando ejecución')
     return
   }
 
