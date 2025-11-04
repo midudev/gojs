@@ -30,6 +30,9 @@ let executorWorker: Worker | null = null
 let executionTimeoutId: number | null = null // Timer del hilo principal para timeout
 const EXECUTION_TIMEOUT = 2000 // 2 segundos de timeout por defecto
 
+// Guardar el último código ejecutado para evitar ejecuciones innecesarias
+let lastExecutedCode: string = ''
+
 let currentSettings = loadSettings()
 
 // Inicializar editor
@@ -326,6 +329,8 @@ function initExecutorWorker() {
 
 // Ejecutar código
 async function runCode() {
+  console.log('runCode')
+
   if (!editor) return
 
   // Si auto-format está activado, formatear antes de ejecutar
@@ -334,6 +339,13 @@ async function runCode() {
   }
 
   const code = editor.getValue()
+  
+  // Verificar si el código es el mismo que se ejecutó anteriormente
+  if (code === lastExecutedCode) {
+    console.log('Código sin cambios, ignorando ejecución')
+    return
+  }
+
   const outputElement = $('#output')!
 
   // Limpiar salida anterior
@@ -516,6 +528,9 @@ async function runCode() {
       code: modifiedCode,
       lineMap: lineMapObj,
     })
+    
+    // Guardar el código que acabamos de ejecutar
+    lastExecutedCode = code
   } catch (error: any) {
     addLog('error', null, `Error de sintaxis: ${error.message}`)
     if (error.stack) {
