@@ -16,6 +16,12 @@ interface Breakpoint {
   orientation: string
 }
 
+type PanelOrientation = 'horizontal' | 'vertical'
+
+function isPanelOrientation(value: string | null): value is PanelOrientation {
+  return value === 'horizontal' || value === 'vertical'
+}
+
 class ResizePanels extends HTMLElement {
   private panels: HTMLElement[] = []
   private dividers: HTMLElement[] = []
@@ -57,10 +63,7 @@ class ResizePanels extends HTMLElement {
   }
 
   disconnectedCallback() {
-    // Limpiar media query listeners
-    this.mediaQueries.forEach((mq: MediaQueryInfo) => {
-      mq.mediaQuery.removeEventListener('change', mq.handler)
-    })
+    this.clearMediaQueries()
 
     if (this.mutationObserver) {
       this.mutationObserver.disconnect()
@@ -74,7 +77,28 @@ class ResizePanels extends HTMLElement {
     }
   }
 
+  clearMediaQueries() {
+    this.mediaQueries.forEach((mq: MediaQueryInfo) => {
+      mq.mediaQuery.removeEventListener('change', mq.handler)
+    })
+    this.mediaQueries = []
+  }
+
+  getOrientationOverride() {
+    const orientation = this.getAttribute('orientation')
+    return isPanelOrientation(orientation) ? orientation : null
+  }
+
   setupResponsiveConfig() {
+    this.clearMediaQueries()
+    this.currentOrientation = null
+
+    const orientationOverride = this.getOrientationOverride()
+    if (orientationOverride) {
+      this.currentOrientation = orientationOverride
+      return
+    }
+
     const configAttr = this.getAttribute('responsive-config')
 
     if (configAttr) {
@@ -82,20 +106,15 @@ class ResizePanels extends HTMLElement {
         const config = JSON.parse(configAttr)
         this.responsiveConfig = config
 
-        // Limpiar listeners anteriores
-        this.mediaQueries.forEach((mq: MediaQueryInfo) => {
-          mq.mediaQuery.removeEventListener('change', mq.handler)
-        })
-        this.mediaQueries = []
-
         // Configurar media queries
         if (config.breakpoints) {
           config.breakpoints.forEach((bp: Breakpoint) => {
             const mq = window.matchMedia(bp.query)
             const handler = (e: MediaQueryListEvent) => {
+              if (this.getOrientationOverride()) return
+
               if (e.matches) {
-                this.currentOrientation = bp.orientation
-                this.updateOrientation()
+                this.updateOrientation(bp.orientation)
               }
             }
 
@@ -122,9 +141,10 @@ class ResizePanels extends HTMLElement {
     }
   }
 
-  updateOrientation() {
+  updateOrientation(nextOrientation = this.currentOrientation) {
     const oldOrientation = this.orientation
-    if (oldOrientation !== this.currentOrientation) {
+    if (nextOrientation && oldOrientation !== nextOrientation) {
+      this.currentOrientation = nextOrientation
       this.render()
       this.setupPanels()
       this.setupDividers()
@@ -143,20 +163,8 @@ class ResizePanels extends HTMLElement {
     const style = document.createElement('style')
     style.textContent = `
           :host {
-              --color-bg-primary: #1e1e1e;
-              --color-bg-secondary: #252525;
-              --color-bg-tertiary: #2d2d2d;
-              --color-border: #3e3e3e;
-              --color-text-primary: #e4e4e4;
-              --color-text-secondary: #a0a0a0;
-              --color-accent: #4fc3f7;
-              --color-accent-hover: #29b6f6;
-              --color-success: #66bb6a;
-              --color-error: #ef5350;
-              --color-warning: #ffa726;
-          }
-
-          :host {
+              --resize-panel-divider-color: var(--surface-divider-color, var(--color-border, #3e3e3e));
+              --resize-panel-accent-color: var(--color-accent, #4fc3f7);
               display: flex;
               flex-direction: ${this.isHorizontal ? 'row' : 'column'};
               width: 100%;
@@ -194,7 +202,7 @@ class ResizePanels extends HTMLElement {
               left: 0;
               width: ${this.isHorizontal ? '1px' : '100%'};
               height: ${this.isHorizontal ? '100%' : '1px'};
-              background-color: var(--color-border, #3e3e3e);
+              background-color: var(--resize-panel-divider-color);
               transition: all 0.2s ease;
           }
 
@@ -202,15 +210,15 @@ class ResizePanels extends HTMLElement {
           .divider:hover::before {
               width: ${this.isHorizontal ? '2px' : '100%'};
               height: ${this.isHorizontal ? '100%' : '2px'};
-              background-color: var(--color-accent, #4fc3f7);
-              box-shadow: 0 0 8px rgba(79, 195, 247, 0.3);
+              background-color: var(--resize-panel-accent-color);
+              box-shadow: 0 0 8px color-mix(in srgb, var(--resize-panel-accent-color) 30%, transparent);
           }
 
           .divider.dragging::before {
               width: ${this.isHorizontal ? '3px' : '100%'};
               height: ${this.isHorizontal ? '100%' : '3px'};
-              background-color: var(--color-accent, #4fc3f7);
-              box-shadow: 0 0 12px rgba(79, 195, 247, 0.5);
+              background-color: var(--resize-panel-accent-color);
+              box-shadow: 0 0 12px color-mix(in srgb, var(--resize-panel-accent-color) 45%, transparent);
           }
 
           ::slotted(*) {
@@ -418,7 +426,7 @@ class ResizePanels extends HTMLElement {
 
   attributeChangedCallback(name: string, oldValue: string | null, newValue: string | null) {
     if (oldValue !== newValue) {
-      if (name === 'responsive-config') {
+      if (name === 'responsive-config' || name === 'orientation') {
         this.setupResponsiveConfig()
       }
       this.render()
@@ -574,6 +582,10 @@ class ResizePanels extends HTMLElement {
 
   public requestLayoutUpdate() {
     this.scheduleLayoutUpdate()
+  }
+
+  public getOrientation() {
+    return this.orientation
   }
 }
 

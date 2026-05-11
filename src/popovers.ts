@@ -1,11 +1,13 @@
 export function initHeaderPopovers() {
   const autorunToggleButton = document.getElementById('autorun-toggle-button') as HTMLElement | null
   const aiToggleButton = document.getElementById('ai-toggle-button') as HTMLElement | null
+  const layoutToggleButton = document.getElementById('layout-toggle-button') as HTMLElement | null
   const settingsButton = document.getElementById('settings-button') as HTMLElement | null
   const issueButton = document.getElementById('issue-button') as HTMLElement | null
 
   const tooltipAutorun = document.getElementById('tooltip-autorun') as HTMLElement | null
   const tooltipAI = document.getElementById('tooltip-ai') as HTMLElement | null
+  const tooltipLayout = document.getElementById('tooltip-layout') as HTMLElement | null
   const tooltipSettings = document.getElementById('tooltip-settings') as HTMLElement | null
   const tooltipIssue = document.getElementById('tooltip-issue') as HTMLElement | null
 
@@ -34,6 +36,7 @@ export function initHeaderPopovers() {
 
   attachHintTooltip(autorunToggleButton, tooltipAutorun)
   attachHintTooltip(aiToggleButton, tooltipAI)
+  attachHintTooltip(layoutToggleButton, tooltipLayout)
   attachHintTooltip(settingsButton, tooltipSettings)
   attachHintTooltip(issueButton, tooltipIssue)
 }

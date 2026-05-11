@@ -73,6 +73,7 @@ function render() {
   if (!container) return
 
   container.innerHTML = ''
+  container.hidden = false
 
   const list = document.createElement('div')
   list.className = 'tabs-list'

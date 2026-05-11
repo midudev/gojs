@@ -56,7 +56,7 @@
         <!-- Aquí irán las pestañas en el futuro -->
       </div>
       <div class="header-actions">
-        <button id="autorun-toggle-button" class="icon-button" title="Auto-ejecutar">
+        <button id="autorun-toggle-button" class="icon-button" title="Auto-run">
           <svg id="pause-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -69,7 +69,7 @@
             <path d="M7 4v16l13 -8z" />
           </svg>
         </button>
-        <button id="ai-toggle-button" class="icon-button" title="IA activada (click para desactivar)">
+        <button id="ai-toggle-button" class="icon-button" title="AI enabled (click to disable)">
           <svg id="robot-off-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
             style="display: none">
@@ -95,6 +95,24 @@
             <path d="M9 18h6" />
             <path d="M10 8v.01" />
             <path d="M14 8v.01" />
+          </svg>
+        </button>
+        <button id="layout-toggle-button" class="icon-button" type="button" title="Switch to vertical layout"
+          aria-label="Switch to vertical layout" aria-pressed="true">
+          <svg id="layout-horizontal-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 5h16" />
+            <path d="M4 19h16" />
+            <path d="M4 9h7v6h-7z" />
+            <path d="M13 9h7v6h-7z" />
+          </svg>
+          <svg id="layout-vertical-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+            style="display: none">
+            <path d="M5 4v16" />
+            <path d="M19 4v16" />
+            <path d="M9 4h6v7h-6z" />
+            <path d="M9 13h6v7h-6z" />
           </svg>
         </button>
         <a id="issue-button" class="icon-button" href="https://github.com/midudev/gojs-issues/issues/new"
@@ -162,7 +180,7 @@
               </svg>
               <span>AI Assistant</span>
             </div>
-            <button id="chatbot-clear" class="chatbot-action-btn" title="Limpiar conversación">
+            <button id="chatbot-clear" class="chatbot-action-btn" title="Clear conversation" hidden>
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                 <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -174,20 +192,11 @@
               </svg>
             </button>
           </div>
-          <div class="chatbot-messages" id="chatbot-messages">
-            <div class="chatbot-loading-message" id="chatbot-loading">
-              <div class="loading-spinner"></div>
-              <span>Loading IA model...</span>
-              <div class="loading-progress">
-                <div class="loading-progress-bar" id="loading-progress-bar"></div>
-              </div>
-              <div class="loading-progress-text" id="loading-progress-text">0%</div>
-            </div>
-          </div>
+          <div class="chatbot-messages" id="chatbot-messages"></div>
           <div class="chatbot-input-container">
             <textarea id="chatbot-input" class="chatbot-input" placeholder="Ask about the code or the output..."
               rows="1" disabled></textarea>
-            <button id="chatbot-send" class="chatbot-send-btn" disabled title="Enviar mensaje">
+            <button id="chatbot-send" class="chatbot-send-btn" disabled title="Send message">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                 stroke-linecap="round" stroke-linejoin="round">
                 <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -202,23 +211,28 @@
 
     <!-- Tooltips (Popover API - hint) for header actions -->
     <div id="tooltip-autorun" class="tooltip" popover="hint">Auto execute</div>
-    <div id="tooltip-ai" class="tooltip" popover="hint">Alternate IA</div>
+    <div id="tooltip-ai" class="tooltip" popover="hint">Toggle AI</div>
+    <div id="tooltip-layout" class="tooltip" popover="hint">Switch layout</div>
     <div id="tooltip-issue" class="tooltip" popover="hint">New issue</div>
     <div id="tooltip-settings" class="tooltip" popover="hint">Settings</div>
 
     <!-- Settings Modal -->
-    <div id="settings-modal" class="modal" style="display: none">
+    <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"
+      aria-describedby="settings-description" aria-hidden="true" style="display: none">
       <div class="modal-overlay"></div>
       <div class="modal-content">
         <div class="modal-header">
-          <h2>Settings</h2>
-          <button id="close-settings" class="close-button">×</button>
+          <div>
+            <h2 id="settings-title">Settings</h2>
+          </div>
+          <button id="close-settings" class="close-button" type="button" aria-label="Close settings">×</button>
         </div>
         <div class="modal-body">
-          <div class="settings-tabs">
-            <button class="settings-tab active" data-tab="appearance">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"
-                stroke-linecap="round" stroke-linejoin="round">
+          <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+            <button id="settings-tab-appearance" class="settings-tab active" type="button" role="tab"
+              aria-selected="true" aria-controls="settings-panel-appearance" data-tab="appearance">
+              <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
                 <path stroke="none" d="M0 0h24v24H0z" fill="none" />
                 <path
                   d="M12 21a9 9 0 0 1 0 -18c4.97 0 9 3.582 9 8c0 1.06 -.474 2.078 -1.318 2.828c-.844 .75 -1.989 1.172 -3.182 1.172h-2.5a2 2 0 0 0 -1 3.75a1.3 1.3 0 0 1 -1 2.25" />
@@ -226,19 +240,22 @@
                 <path d="M12.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
                 <path d="M16.5 10.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
               </svg>
-              Appearance
+              <span>Appearance</span>
             </button>
-            <button class="settings-tab" data-tab="formatting">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <button id="settings-tab-formatting" class="settings-tab" type="button" role="tab" aria-selected="false"
+              aria-controls="settings-panel-formatting" tabindex="-1" data-tab="formatting">
+              <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1">
                 <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
                 <path d="M13.5 6.5l4 4" />
                 <path d="M15 19l2 2l4 -4" />
               </svg>
-              Formatting
+              <span>Formatting</span>
             </button>
-            <button class="settings-tab" data-tab="advanced">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"
-                stroke-linecap="round" stroke-linejoin="round">
+            <button id="settings-tab-advanced" class="settings-tab" type="button" role="tab" aria-selected="false"
+              aria-controls="settings-panel-advanced" tabindex="-1" data-tab="advanced">
+              <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
                 <path stroke="none" d="M0 0h24v24H0z" fill="none" />
                 <path
                   d="M12.501 20.93c-.866 .25 -1.914 -.166 -2.176 -1.247a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.074 .26 1.49 1.296 1.252 2.158" />
@@ -246,14 +263,15 @@
                 <path d="M22 19l-3 -3l-3 3" />
                 <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
               </svg>
-              Advanced
+              <span>Advanced</span>
             </button>
           </div>
           <div class="settings-content">
             <!-- Appearance Tab -->
-            <div class="settings-panel active" data-panel="appearance">
+            <div id="settings-panel-appearance" class="settings-panel active" role="tabpanel"
+              aria-labelledby="settings-tab-appearance" data-panel="appearance">
               <div class="setting-item">
-                <label>Theme</label>
+                <label for="setting-theme">Theme</label>
                 <select id="setting-theme">
                   <option value="vitesse-dark">Vitesse Dark</option>
                   <option value="vitesse-light">Vitesse Light</option>
@@ -267,14 +285,14 @@
                 </select>
               </div>
               <div class="setting-item">
-                <label>Font Family</label>
+                <label for="setting-font-family">Font Family</label>
                 <select id="setting-font-family">
                   <option value="JetBrains Mono">JetBrains Mono</option>
                   <option value="Cascadia Code">Cascadia Code</option>
                 </select>
               </div>
               <div class="setting-item">
-                <label>Font Size</label>
+                <label for="setting-font-size">Font Size</label>
                 <input type="number" id="setting-font-size" min="10" max="30" value="14" />
               </div>
               <div class="setting-item-checkbox">
@@ -288,17 +306,18 @@
             </div>
 
             <!-- Formatting Tab -->
-            <div class="settings-panel" data-panel="formatting">
+            <div id="settings-panel-formatting" class="settings-panel" role="tabpanel"
+              aria-labelledby="settings-tab-formatting" data-panel="formatting" hidden>
               <div class="setting-item-checkbox">
                 <input type="checkbox" id="setting-auto-format" />
                 <label for="setting-auto-format">Automatically format code on run</label>
               </div>
               <div class="setting-item">
-                <label>Print Width</label>
+                <label for="setting-print-width">Print Width</label>
                 <input type="number" id="setting-print-width" min="40" max="200" value="80" />
               </div>
               <div class="setting-item">
-                <label>Tab Width</label>
+                <label for="setting-tab-width">Tab Width</label>
                 <input type="number" id="setting-tab-width" min="1" max="8" value="2" />
               </div>
               <div class="setting-item-checkbox">
@@ -310,7 +329,7 @@
                 <label for="setting-single-quote">Use single quotes instead of double quotes</label>
               </div>
               <div class="setting-item">
-                <label>Quote Props</label>
+                <label for="setting-quote-props">Quote Props</label>
                 <select id="setting-quote-props">
                   <option value="as-needed">as-needed</option>
                   <option value="consistent">consistent</option>
@@ -322,7 +341,7 @@
                 <label for="setting-jsx-single-quote">Use single quotes instead of double quotes in JSX</label>
               </div>
               <div class="setting-item">
-                <label>Trailing Commas</label>
+                <label for="setting-trailing-comma">Trailing Commas</label>
                 <select id="setting-trailing-comma">
                   <option value="none">none</option>
                   <option value="es5">es5</option>
@@ -334,7 +353,7 @@
                 <label for="setting-bracket-spacing">Print spaces between brackets in object literals</label>
               </div>
               <div class="setting-item">
-                <label>Arrow Function Parentheses</label>
+                <label for="setting-arrow-parens">Arrow Function Parentheses</label>
                 <select id="setting-arrow-parens">
                   <option value="always">always</option>
                   <option value="avoid">avoid</option>
@@ -343,10 +362,42 @@
             </div>
 
             <!-- Advanced Tab -->
-            <div class="settings-panel" data-panel="advanced">
+            <div id="settings-panel-advanced" class="settings-panel" role="tabpanel"
+              aria-labelledby="settings-tab-advanced" data-panel="advanced" hidden>
+              <div class="setting-group">
+                <div class="setting-group-header">
+                  <h3>AI Assistant</h3>
+                  <p>Choose which model the chat uses and manage its local installation.</p>
+                </div>
+                <div class="setting-item">
+                  <label for="setting-ai-model">Model</label>
+                  <select id="setting-ai-model"></select>
+                </div>
+                <div id="setting-ai-model-meta" class="setting-help"></div>
+                <div id="setting-ai-storage-usage" class="setting-help" aria-live="polite">
+                  Calculating local AI storage...
+                </div>
+                <div id="setting-ai-model-status" class="setting-status">Checking model status...</div>
+                <div class="setting-actions">
+                  <button id="setting-ai-model-install" type="button" class="settings-action-button">
+                    Download and load
+                  </button>
+                  <button id="setting-ai-model-uninstall" type="button" class="settings-action-button danger">
+                    Uninstall
+                  </button>
+                  <button id="setting-ai-clear-local-data" type="button" class="settings-action-button danger"
+                    aria-describedby="setting-ai-storage-usage setting-ai-model-status">
+                    Clear all local AI data
+                  </button>
+                </div>
+              </div>
               <div class="setting-item">
-                <label>Auto-run delay (ms)</label>
+                <label for="setting-debounce">Auto-run delay (ms)</label>
                 <input type="number" id="setting-debounce" min="100" max="5000" step="100" value="800" />
+              </div>
+              <div class="setting-item-checkbox">
+                <input type="checkbox" id="setting-auto-log-expressions" checked />
+                <label for="setting-auto-log-expressions">Automatically log expressions</label>
               </div>
               <div class="setting-item-checkbox">
                 <input type="checkbox" id="setting-format-on-paste" checked />

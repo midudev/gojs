@@ -2,6 +2,8 @@
  * Utilidad para manejar el almacenamiento local de configuraciones
  */
 
+import { DEFAULT_CHATBOT_MODEL_ID, isValidChatModelId } from './ai-models'
+
 // Temas disponibles en modern-monaco
 export const AVAILABLE_THEMES = [
   'vitesse-dark',
@@ -39,9 +41,12 @@ export interface EditorSettings {
   theme: Theme
   fontSize: number
   fontFamily: FontFamily
+  aiEnabled: boolean
+  aiModelId: string
   minimap: boolean
   lineNumbers: boolean
   debounceDelay: number
+  autoLogExpressions: boolean
   formatOnPaste: boolean
   formatOnType: boolean
   prettier: PrettierSettings
@@ -51,9 +56,12 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   theme: 'vitesse-dark',
   fontSize: 14,
   fontFamily: 'JetBrains Mono',
+  aiEnabled: true,
+  aiModelId: DEFAULT_CHATBOT_MODEL_ID,
   minimap: false,
   lineNumbers: true,
   debounceDelay: 800,
+  autoLogExpressions: true,
   formatOnPaste: true,
   formatOnType: true,
   prettier: {
@@ -122,9 +130,15 @@ function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
     fontSize: validateNumber(settings.fontSize, 10, 30, DEFAULT_SETTINGS.fontSize),
     fontFamily:
       settings.fontFamily && isValidFont(settings.fontFamily) ? settings.fontFamily : DEFAULT_SETTINGS.fontFamily,
+    aiEnabled: validateBoolean(settings.aiEnabled, DEFAULT_SETTINGS.aiEnabled),
+    aiModelId:
+      typeof settings.aiModelId === 'string' && isValidChatModelId(settings.aiModelId)
+        ? settings.aiModelId
+        : DEFAULT_SETTINGS.aiModelId,
     minimap: validateBoolean(settings.minimap, DEFAULT_SETTINGS.minimap),
     lineNumbers: validateBoolean(settings.lineNumbers, DEFAULT_SETTINGS.lineNumbers),
     debounceDelay: validateNumber(settings.debounceDelay, 100, 5000, DEFAULT_SETTINGS.debounceDelay),
+    autoLogExpressions: validateBoolean(settings.autoLogExpressions, DEFAULT_SETTINGS.autoLogExpressions),
     formatOnPaste: validateBoolean(settings.formatOnPaste, DEFAULT_SETTINGS.formatOnPaste),
     formatOnType: validateBoolean(settings.formatOnType, DEFAULT_SETTINGS.formatOnType),
     prettier: {

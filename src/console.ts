@@ -6,8 +6,21 @@ interface ExpressionInfo {
   line: number
 }
 
+interface InjectExpressionLoggingOptions {
+  enabled?: boolean
+}
+
 // Mapa de líneas: línea en código modificado -> línea en código original
 export const lineMap = new Map<number, number>()
+
+function mapOriginalCodeLines(code: string) {
+  lineMap.clear()
+
+  const originalLines = code.split('\n').length
+  for (let i = 1; i <= originalLines; i++) {
+    lineMap.set(i + 1, i) // +1 por el wrapper de AsyncFunction
+  }
+}
 
 /**
  * Detecta expresiones en el código que deberían evaluarse y mostrarse en la consola
@@ -72,18 +85,20 @@ export function detectExpressions(code: string): ExpressionInfo[] {
  * @param code El código JavaScript original
  * @returns El código modificado con las inyecciones
  */
-export function injectExpressionLogging(code: string): string {
+export function injectExpressionLogging(code: string, options: InjectExpressionLoggingOptions = {}): string {
   // Limpiar el mapa
   lineMap.clear()
+
+  if (options.enabled === false) {
+    mapOriginalCodeLines(code)
+    return code
+  }
 
   const expressions = detectExpressions(code)
 
   if (expressions.length === 0) {
     // Sin inyecciones, mapeo 1:1
-    const originalLines = code.split('\n').length
-    for (let i = 1; i <= originalLines; i++) {
-      lineMap.set(i + 1, i) // +1 por el wrapper de AsyncFunction
-    }
+    mapOriginalCodeLines(code)
     return code
   }
 

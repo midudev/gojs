@@ -1,6 +1,8 @@
 // Web Worker para ejecutar código de usuario con timeout
 // Este worker ejecuta código en un hilo separado para evitar congelar la UI
 
+import { serializeConsoleValue } from './console-values'
+
 interface ExecuteMessage {
   type: 'execute'
   code: string
@@ -31,50 +33,13 @@ const counters: Map<string, number> = new Map()
 // Mapa de líneas actual (se actualiza con cada ejecución)
 let currentLineMap: Record<number, number> = {}
 
-// Función para serializar valores que no se pueden clonar (promesas, funciones, etc.)
-function serializeValue(value: any): any {
-  // Promesas
-  if (value instanceof Promise) {
-    return { __type: 'Promise', __value: 'Promise { <pending> }' }
-  }
-
-  // Funciones
-  if (typeof value === 'function') {
-    return { __type: 'Function', __value: value.toString() }
-  }
-
-  // null o undefined
-  if (value === null || value === undefined) {
-    return value
-  }
-
-  // Primitivos
-  if (typeof value !== 'object') {
-    return value
-  }
-
-  // Intentar serializar objetos complejos
-  try {
-    // Verificar si es serializable con JSON
-    JSON.stringify(value)
-    return value
-  } catch {
-    // Si falla, devolver una representación en string
-    try {
-      return { __type: 'Object', __value: Object.prototype.toString.call(value) }
-    } catch {
-      return { __type: 'Unknown', __value: '[Unable to serialize]' }
-    }
-  }
-}
-
 // Crear console personalizado que envía mensajes al hilo principal
 const customConsole = {
   log: (...args: any[]) => {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
     // Serializar los argumentos para evitar errores de clonación
-    const serializedArgs = args.map(serializeValue)
+    const serializedArgs = args.map((arg) => serializeConsoleValue(arg))
     const message: LogMessage = {
       type: 'log',
       lineNumber,
@@ -85,7 +50,7 @@ const customConsole = {
   info: (...args: any[]) => {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
-    const serializedArgs = args.map(serializeValue)
+    const serializedArgs = args.map((arg) => serializeConsoleValue(arg))
     const message: LogMessage = {
       type: 'info',
       lineNumber,
@@ -96,7 +61,7 @@ const customConsole = {
   warn: (...args: any[]) => {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
-    const serializedArgs = args.map(serializeValue)
+    const serializedArgs = args.map((arg) => serializeConsoleValue(arg))
     const message: LogMessage = {
       type: 'warn',
       lineNumber,
@@ -107,7 +72,7 @@ const customConsole = {
   error: (...args: any[]) => {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
-    const serializedArgs = args.map(serializeValue)
+    const serializedArgs = args.map((arg) => serializeConsoleValue(arg))
     const message: LogMessage = {
       type: 'error',
       lineNumber,
@@ -145,7 +110,7 @@ const customConsole = {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
     // Serializar el data para evitar errores de clonación
-    const serializedData = serializeValue(data)
+    const serializedData = serializeConsoleValue(data)
     const message: LogMessage = {
       type: 'table',
       lineNumber,
@@ -173,7 +138,7 @@ const customConsole = {
   },
   __logExpression__: (value: any, lineNumber: number) => {
     // Serializar el valor para evitar errores de clonación (promesas, funciones, etc.)
-    const serializedValue = serializeValue(value)
+    const serializedValue = serializeConsoleValue(value)
     const message: LogMessage = {
       type: 'expression',
       lineNumber,
