@@ -11,6 +11,10 @@ node_modules
 dist
 dist-ssr
 *.local
+native/.zig-cache
+native/dist
+native/zig-out
+native/third_party/cef
 
 # Editor directories and files
 .vscode/*
