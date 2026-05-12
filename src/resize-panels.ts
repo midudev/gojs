@@ -331,6 +331,73 @@ class ResizePanels extends HTMLElement {
     }
   }
 
+  getPanelChild(panel: HTMLElement) {
+    return panel.querySelector('slot')?.assignedElements()[0] as HTMLElement | undefined
+  }
+
+  getPanelConstraints(panel: HTMLElement) {
+    const child = this.getPanelChild(panel)
+
+    if (!child) {
+      return {
+        min: 50,
+        max: Infinity,
+      }
+    }
+
+    return this.getConstraints(child)
+  }
+
+  clampSize(size: number, constraints: { min: number; max: number }) {
+    return Math.min(Math.max(size, constraints.min), constraints.max)
+  }
+
+  distributeConstrainedSizes(
+    availableSize: number,
+    baseSizes: number[],
+    constraints: Array<{ min: number; max: number }>,
+  ) {
+    const finalSizes = new Array<number>(baseSizes.length)
+    const lockedIndexes = new Set<number>()
+    let remainingSize = availableSize
+
+    for (let pass = 0; pass < baseSizes.length; pass++) {
+      const unlockedIndexes = baseSizes.map((_, index) => index).filter((index) => !lockedIndexes.has(index))
+
+      if (unlockedIndexes.length === 0) break
+
+      const weightSum = unlockedIndexes.reduce((sum, index) => sum + Math.max(0, baseSizes[index]), 0)
+      let lockedInThisPass = false
+
+      for (const index of unlockedIndexes) {
+        const proposedSize =
+          weightSum > 0
+            ? (remainingSize * Math.max(0, baseSizes[index])) / weightSum
+            : remainingSize / unlockedIndexes.length
+        const constrainedSize = this.clampSize(proposedSize, constraints[index])
+
+        if (constrainedSize !== proposedSize) {
+          finalSizes[index] = constrainedSize
+          lockedIndexes.add(index)
+          remainingSize -= constrainedSize
+          lockedInThisPass = true
+        }
+      }
+
+      if (!lockedInThisPass) {
+        for (const index of unlockedIndexes) {
+          finalSizes[index] =
+            weightSum > 0
+              ? (remainingSize * Math.max(0, baseSizes[index])) / weightSum
+              : remainingSize / unlockedIndexes.length
+        }
+        break
+      }
+    }
+
+    return finalSizes
+  }
+
   onMouseMove(e: MouseEvent) {
     if (!this.isDragging) return
 
@@ -340,8 +407,8 @@ class ResizePanels extends HTMLElement {
 
     if (this.isHorizontal) {
       const delta = e.clientX - this.startX
-      const leftChild = leftPanel?.querySelector('slot')?.assignedElements()[0] as HTMLElement
-      const rightChild = rightPanel?.querySelector('slot')?.assignedElements()[0] as HTMLElement
+      const leftChild = this.getPanelChild(leftPanel) as HTMLElement
+      const rightChild = this.getPanelChild(rightPanel) as HTMLElement
 
       const leftConstraints = this.getConstraints(leftChild)
       const rightConstraints = this.getConstraints(rightChild)
@@ -372,8 +439,8 @@ class ResizePanels extends HTMLElement {
       rightPanel.style.flex = `0 0 ${newRightWidth}px`
     } else {
       const delta = e.clientY - this.startY
-      const leftChild = leftPanel?.querySelector('slot')?.assignedElements()[0] as HTMLElement
-      const rightChild = rightPanel?.querySelector('slot')?.assignedElements()[0] as HTMLElement
+      const leftChild = this.getPanelChild(leftPanel) as HTMLElement
+      const rightChild = this.getPanelChild(rightPanel) as HTMLElement
 
       const topConstraints = this.getConstraints(leftChild)
       const bottomConstraints = this.getConstraints(rightChild)
@@ -556,10 +623,13 @@ class ResizePanels extends HTMLElement {
       sizes.fill(availableSize / visibleInfos.length)
     }
 
+    const constraints = visibleInfos.map((info) => this.getPanelConstraints(info.panel))
+    const constrainedSizes = this.distributeConstrainedSizes(availableSize, sizes, constraints)
+
     visibleInfos.forEach((info, idx) => {
       const currentSize = Math.max(0, sizes[idx]) || totalSize / visibleInfos.length
       const proportion = currentSize / totalSize
-      const newSize = Math.max(0, availableSize * proportion)
+      const newSize = Math.max(0, constrainedSizes[idx] ?? availableSize * proportion)
       const flexValue = `0 0 ${newSize}px`
       info.panel.style.flex = flexValue
       info.panel.dataset.lastSize = String(newSize)
