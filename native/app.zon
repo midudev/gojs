@@ -1,0 +1,34 @@
+.{
+    .id = "app.gojs.desktop",
+    .name = "gojs",
+    .display_name = "GoJS.app",
+    .version = "0.1.0",
+    .platforms = .{ "macos" },
+    .permissions = .{},
+    .capabilities = .{ "webview" },
+    .frontend = .{
+        .dist = "dist",
+        .entry = "index.html",
+        .spa_fallback = true,
+        .dev = .{
+            .url = "http://127.0.0.1:5555/",
+            .command = .{ "pnpm", "--dir", "..", "dev", "--", "--host", "127.0.0.1" },
+            .ready_path = "/",
+            .timeout_ms = 30000,
+        },
+    },
+    .security = .{
+        .navigation = .{
+            .allowed_origins = .{ "zero://app", "http://127.0.0.1:5555" },
+            .external_links = .{
+                .action = "open_system_browser",
+                .allowed_urls = .{ "https://github.com/midudev/gojs-issues/*" },
+            },
+        },
+    },
+    .web_engine = "chromium",
+    .cef = .{ .dir = "third_party/cef/macos", .auto_install = false },
+    .windows = .{
+        .{ .label = "main", .title = "GoJS.app", .width = 1280, .height = 820, .restore_state = true },
+    },
+}
