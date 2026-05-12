@@ -2138,6 +2138,19 @@ body {
   box-shadow: 0 0 0 1px var(--color-accent);
 }
 
+.setting-item select,
+.chatbot-model-picker select {
+  color-scheme: inherit;
+}
+
+.setting-item select option,
+.setting-item select optgroup,
+.chatbot-model-picker select option,
+.chatbot-model-picker select optgroup {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
 .chatbot-model-status {
   min-height: 20px;
   color: var(--color-text-secondary);
