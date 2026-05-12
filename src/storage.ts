@@ -24,6 +24,8 @@ export const AVAILABLE_FONTS = ['JetBrains Mono', 'Cascadia Code'] as const
 
 export type FontFamily = (typeof AVAILABLE_FONTS)[number]
 
+export type LayoutOrientation = 'horizontal' | 'vertical'
+
 export interface PrettierSettings {
   autoFormat: boolean
   printWidth: number
@@ -49,6 +51,7 @@ export interface EditorSettings {
   autoLogExpressions: boolean
   formatOnPaste: boolean
   formatOnType: boolean
+  layoutOrientation: LayoutOrientation | null
   prettier: PrettierSettings
 }
 
@@ -64,6 +67,7 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   autoLogExpressions: true,
   formatOnPaste: true,
   formatOnType: true,
+  layoutOrientation: null,
   prettier: {
     autoFormat: false,
     printWidth: 80,
@@ -120,6 +124,10 @@ function isValidFont(font: string): font is FontFamily {
   return AVAILABLE_FONTS.includes(font as FontFamily)
 }
 
+function isValidLayoutOrientation(value: unknown): value is LayoutOrientation {
+  return value === 'horizontal' || value === 'vertical'
+}
+
 /**
  * Valida y normaliza las configuraciones cargadas
  */
@@ -141,6 +149,9 @@ function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
     autoLogExpressions: validateBoolean(settings.autoLogExpressions, DEFAULT_SETTINGS.autoLogExpressions),
     formatOnPaste: validateBoolean(settings.formatOnPaste, DEFAULT_SETTINGS.formatOnPaste),
     formatOnType: validateBoolean(settings.formatOnType, DEFAULT_SETTINGS.formatOnType),
+    layoutOrientation: isValidLayoutOrientation(settings.layoutOrientation)
+      ? settings.layoutOrientation
+      : DEFAULT_SETTINGS.layoutOrientation,
     prettier: {
       autoFormat: validateBoolean(prettierSettings.autoFormat, DEFAULT_SETTINGS.prettier.autoFormat),
       printWidth: validateNumber(prettierSettings.printWidth, 40, 200, DEFAULT_SETTINGS.prettier.printWidth),

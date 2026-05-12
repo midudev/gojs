@@ -12,7 +12,14 @@ import {
   isChromePromptApiModelId,
 } from './ai-models'
 import { INITIAL_CODE } from './consts'
-import { AVAILABLE_THEMES, loadSettings, updateSetting, calculateLineHeight, type Theme } from './storage'
+import {
+  AVAILABLE_THEMES,
+  loadSettings,
+  updateSetting,
+  calculateLineHeight,
+  type LayoutOrientation,
+  type Theme,
+} from './storage'
 import { initPrettierWorker, formatCode, destroyPrettierWorker } from './prettier'
 import { injectExpressionLogging, lineMap } from './console'
 import { formatConsoleValueText, isSerializedConsoleValue } from './console-values'
@@ -46,7 +53,7 @@ type EditorThemeData = {
   semanticHighlighting?: boolean
 }
 
-type PanelOrientation = 'horizontal' | 'vertical'
+type PanelOrientation = LayoutOrientation
 
 type ResizePanelsElement = HTMLElement & {
   getOrientation?: () => string
@@ -58,6 +65,7 @@ type StorageEstimateWithDetails = StorageEstimate & {
 }
 
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const
+const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 767.98px)'
 
 // Estado de la aplicación
 let editor: any = null
@@ -1484,6 +1492,20 @@ async function start() {
   const resizePanelsElement = document.querySelector('resize-panels') as ResizePanelsElement | null
 
   if (layoutToggleButton && layoutHorizontalIcon && layoutVerticalIcon && resizePanelsElement) {
+    const mobileLayoutMediaQuery = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY)
+    const syncLayoutOrientation = () => {
+      if (mobileLayoutMediaQuery.matches) {
+        resizePanelsElement.setAttribute('orientation', 'vertical')
+        return
+      }
+
+      if (currentSettings.layoutOrientation) {
+        resizePanelsElement.setAttribute('orientation', currentSettings.layoutOrientation)
+      } else {
+        resizePanelsElement.removeAttribute('orientation')
+      }
+    }
+
     const syncLayoutToggleUI = () => {
       const orientation = getPanelOrientation(resizePanelsElement)
       const isHorizontal = orientation === 'horizontal'
@@ -1501,13 +1523,26 @@ async function start() {
       }
     }
 
+    syncLayoutOrientation()
     syncLayoutToggleUI()
     window.addEventListener('resize', syncLayoutToggleUI)
+    mobileLayoutMediaQuery.addEventListener('change', () => {
+      syncLayoutOrientation()
+      resizePanelsElement.requestLayoutUpdate?.()
+      syncLayoutToggleUI()
+    })
 
     layoutToggleButton.addEventListener('click', () => {
+      if (mobileLayoutMediaQuery.matches) {
+        syncLayoutOrientation()
+        syncLayoutToggleUI()
+        return
+      }
+
       const currentOrientation = getPanelOrientation(resizePanelsElement)
       const nextOrientation: PanelOrientation = currentOrientation === 'horizontal' ? 'vertical' : 'horizontal'
 
+      currentSettings = updateSetting(currentSettings, 'layoutOrientation', nextOrientation)
       resizePanelsElement.setAttribute('orientation', nextOrientation)
       resizePanelsElement.requestLayoutUpdate?.()
       syncLayoutToggleUI()

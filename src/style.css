@@ -1680,7 +1680,12 @@ body {
 }
 
 /* Responsive */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
+  #layout-toggle-button,
+  #tooltip-layout {
+    display: none;
+  }
+
   .main-content {
     flex-direction: column;
   }
