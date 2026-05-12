@@ -1,4 +1,4 @@
-# XJS ⚡
+# GoJS ⚡
 
 Una alternativa moderna a RunJS - un playground interactivo de JavaScript/TypeScript.
 
