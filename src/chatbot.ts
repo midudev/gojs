@@ -518,6 +518,72 @@ class Chatbot {
     }
   }
 
+  /**
+   * Genera una respuesta a partir de una lista de mensajes arbitraria (con su
+   * propio system prompt), SIN tocar el historial de chat ni el system prompt por
+   * defecto. Es la primitiva de bajo nivel que usa el agente de código para poder
+   * dar sus propias instrucciones y hacer varios turnos de razonamiento.
+   */
+  public async generate(messages: ChatMessage[], onChunk?: (chunk: string) => void): Promise<string> {
+    if (isChromePromptApiModelId(this.state.currentModelId)) {
+      return this.generateWithPromptApi(messages, onChunk)
+    }
+
+    if (!this.engine || !this.state.isReady) {
+      throw new Error('The chatbot is not ready. Please wait for it to load.')
+    }
+
+    let fullResponse = ''
+
+    const chunks = await this.engine.chat.completions.create({
+      messages,
+      // Temperatura baja: queremos respuestas deterministas y acciones precisas.
+      temperature: 0.3,
+      max_tokens: 2048,
+      stream: true,
+    })
+
+    for await (const chunk of chunks) {
+      const content = chunk.choices[0]?.delta?.content || ''
+      if (content) {
+        fullResponse += content
+        onChunk?.(content)
+      }
+    }
+
+    return fullResponse
+  }
+
+  // Genera una respuesta con la Chrome Prompt API usando una sesión efímera con el
+  // system prompt indicado (el primer mensaje 'system' de la lista).
+  private async generateWithPromptApi(
+    messages: ChatMessage[],
+    onChunk?: (chunk: string) => void,
+  ): Promise<string> {
+    if (!this.state.isReady) {
+      throw new Error('The chatbot is not ready. Please wait for it to load.')
+    }
+
+    const systemMessage = messages.find((message) => message.role === 'system')?.content ?? ''
+    const conversation = messages
+      .filter((message) => message.role !== 'system')
+      .map((message) => `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.content}`)
+      .join('\n\n')
+
+    const session = await createChromePromptApiSession(systemMessage)
+
+    try {
+      let fullResponse = ''
+      for await (const chunk of streamChromePromptApiResponse(session, conversation)) {
+        fullResponse += chunk
+        onChunk?.(chunk)
+      }
+      return fullResponse
+    } finally {
+      session.destroy?.()
+    }
+  }
+
   // Limpiar el historial de conversación
   public clearHistory() {
     this.resetConversationHistory()

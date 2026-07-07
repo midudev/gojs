@@ -2348,6 +2348,62 @@ body {
   cursor: not-allowed;
 }
 
+/* Tarjetas de pasos del agente de código (edición / ejecución) */
+.agent-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--surface-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 8px;
+  animation: agent-step-in 160ms ease;
+}
+
+@keyframes agent-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.agent-step.run {
+  border-left-color: color-mix(in srgb, var(--color-accent) 70%, #22c55e);
+}
+
+.agent-step.ok {
+  border-left-color: #22c55e;
+}
+
+.agent-step.error {
+  border-left-color: #ef4444;
+}
+
+.agent-step-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.agent-step-title {
+  font-weight: 600;
+}
+
+.agent-step-detail {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 .chatbot-typing-indicator {
   display: flex;
   align-items: center;

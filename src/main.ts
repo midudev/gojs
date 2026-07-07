@@ -33,6 +33,7 @@ import './resize-panels'
 import { createRoot } from 'react-dom/client'
 import { ChatResponse } from './ChatResponse'
 import React from 'react'
+import { runAgent, type AgentBridge, type AgentRunResult } from './agent/agent'
 import { isChromePromptApiAvailable } from './prompt-api'
 // @ts-ignore
 import ExecutorWorker from './executor-worker?worker'
@@ -970,6 +971,65 @@ function teardownApp() {
 
   editor?.dispose?.()
   editor = null
+}
+
+// Espera a que la salida (#output) se estabilice tras lanzar una ejecución.
+// El worker envía los logs de forma asíncrona, así que consideramos "terminado"
+// cuando el HTML de la salida no cambia durante varios sondeos seguidos.
+function waitForOutputStable(outputElement: HTMLElement, maxWaitMs = EXECUTION_TIMEOUT + 1500): Promise<void> {
+  return new Promise((resolve) => {
+    const start = performance.now()
+    let previous = outputElement.innerHTML
+    let stableCount = 0
+
+    const tick = () => {
+      const current = outputElement.innerHTML
+      if (current === previous) {
+        stableCount += 1
+      } else {
+        stableCount = 0
+        previous = current
+      }
+
+      if (stableCount >= 3 || performance.now() - start > maxWaitMs) {
+        resolve()
+        return
+      }
+
+      setTimeout(tick, 120)
+    }
+
+    setTimeout(tick, 120)
+  })
+}
+
+// Lee la salida de la consola del DOM en el formato "contenido (Lx)", igual que
+// hace el chat, y detecta si hubo errores.
+function scrapeConsoleOutput(outputElement: HTMLElement): AgentRunResult {
+  const lines: string[] = []
+  outputElement.querySelectorAll('.log-entry').forEach((entry) => {
+    const contentEl = entry.querySelector('.log-content')
+    const lineNumberEl = entry.querySelector('.log-line-number')
+    const type = entry.classList.contains('error') ? 'error' : entry.classList.contains('warn') ? 'warn' : 'log'
+    const content = contentEl?.textContent?.trim() ?? entry.textContent?.trim() ?? ''
+    if (!content) return
+    const lineNumber = lineNumberEl?.textContent?.trim() ?? ''
+    const prefix = type === 'error' ? 'ERROR: ' : type === 'warn' ? 'WARN: ' : ''
+    lines.push(lineNumber ? `${prefix}${content} (${lineNumber})` : `${prefix}${content}`)
+  })
+
+  const hasError = !!outputElement.querySelector('.log-entry.error')
+  return { output: lines.join('\n'), hasError }
+}
+
+// Ejecuta el código actual y devuelve la salida de consola. La usa el agente.
+async function runCodeAndCollect(): Promise<AgentRunResult> {
+  const outputElement = $('#output') as HTMLElement | null
+  if (!outputElement) return { output: '', hasError: false }
+
+  await runCode()
+  await waitForOutputStable(outputElement)
+  return scrapeConsoleOutput(outputElement)
 }
 
 // Ejecutar código
@@ -2400,7 +2460,7 @@ async function initChatbot() {
 
   renderChatbotModelPickerUI()
 
-  // Función para enviar mensaje
+  // Función para enviar mensaje (el agente decide si solo responde o actúa sobre el código)
   async function sendChatMessage() {
     const message = chatbotInput.value.trim()
     if (!message || !chatbot.getState().isReady) {
@@ -2408,212 +2468,117 @@ async function initChatbot() {
       return
     }
 
-    // Obtener contexto del código y output
-    const code = editor?.getValue() || ''
-    const outputElement = $('#output')
-
-    // Formatear output correctamente para la IA
-    let formattedOutput = ''
-    if (outputElement) {
-      const logEntries = outputElement.querySelectorAll('.log-entry')
-      const outputLines: string[] = []
-
-      logEntries.forEach((entry) => {
-        const contentEl = entry.querySelector('.log-content')
-        const lineNumberEl = entry.querySelector('.log-line-number')
-
-        if (contentEl) {
-          const content = contentEl.textContent?.trim() || ''
-          const lineNumber = lineNumberEl?.textContent?.trim() || ''
-
-          if (lineNumber) {
-            // Formato: contenido (número de línea)
-            outputLines.push(`${content} (${lineNumber})`)
-          } else {
-            outputLines.push(content)
-          }
-        }
-      })
-
-      formattedOutput = outputLines.join('\n')
-    }
-
-    // Crear mensaje contextual
-    let contextualMessage = message
-    if (code || formattedOutput) {
-      contextualMessage = `Current code:\n\`\`\`javascript\n${code}\n\`\`\`\n\n`
-      if (formattedOutput) {
-        contextualMessage += `Console output:\n\`\`\`\n${formattedOutput}\n\`\`\`\n\n`
-      }
-      contextualMessage += `User question: ${message}`
-    }
-
-    // Mostrar mensaje del usuario
+    // Mostrar el mensaje del usuario y limpiar el input
     addChatMessage('user', message)
-
-    // Limpiar input
     chatbotInput.value = ''
     chatbotInput.style.height = 'auto'
     focusChatbotInput()
-
-    // Mantener el textarea enfocable mientras se procesa la respuesta.
     chatbotInput.readOnly = true
     chatbotSend.disabled = true
 
-    // Mostrar indicador de escritura
-    const typingIndicator = document.createElement('div')
-    typingIndicator.className = 'chatbot-typing-indicator'
-    typingIndicator.innerHTML = '<span></span><span></span><span></span>'
-    chatbotMessages?.appendChild(typingIndicator)
-    chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
+    // Indicador de estado (typing)
+    let typingIndicator: HTMLElement | null = null
+    const showStatus = () => {
+      if (!typingIndicator) {
+        typingIndicator = document.createElement('div')
+        typingIndicator.className = 'chatbot-typing-indicator'
+        typingIndicator.innerHTML = '<span></span><span></span><span></span>'
+        chatbotMessages?.appendChild(typingIndicator)
+      }
+      chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
+    }
+    const clearStatus = () => {
+      typingIndicator?.remove()
+      typingIndicator = null
+    }
 
-    try {
-      // Crear elemento de mensaje del asistente
+    // Pinta una tarjeta de paso del agente (edición / ejecución), estilo Claude Code
+    const renderAgentStep = (kind: 'edit' | 'run', title: string) => {
+      const step = document.createElement('div')
+      step.className = `agent-step ${kind}`
+
+      const icon = document.createElement('span')
+      icon.className = 'agent-step-icon'
+      icon.textContent = kind === 'edit' ? '✎' : '▶'
+
+      const titleEl = document.createElement('span')
+      titleEl.className = 'agent-step-title'
+      titleEl.textContent = title
+
+      const detailEl = document.createElement('span')
+      detailEl.className = 'agent-step-detail'
+
+      step.appendChild(icon)
+      step.appendChild(titleEl)
+      step.appendChild(detailEl)
+      chatbotMessages?.appendChild(step)
+      chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
+
+      return {
+        update(detail: string, state?: 'ok' | 'error') {
+          detailEl.textContent = detail
+          if (state) step.classList.add(state)
+          chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
+        },
+      }
+    }
+
+    // Pinta la respuesta final del asistente como markdown (reutiliza ChatResponse)
+    const renderAssistantMarkdown = (markdown: string) => {
       const assistantMessageDiv = document.createElement('div')
       assistantMessageDiv.className = 'chatbot-message assistant'
 
       const roleSpan = document.createElement('div')
       roleSpan.className = 'chatbot-message-role'
       roleSpan.textContent = 'AI Assistant'
-
       assistantMessageDiv.appendChild(roleSpan)
 
-      // Ocultar indicador de escritura y mostrar mensaje
-      typingIndicator.remove()
+      const contentDiv = document.createElement('div')
+      assistantMessageDiv.appendChild(contentDiv)
       chatbotMessages?.appendChild(assistantMessageDiv)
 
-      // Variables para procesar el streaming con <think>
-      let fullContent = ''
-      let isInThinkTag = false
-      let thinkContent = ''
-      let regularContent = ''
-      let thinkBlock: HTMLElement | null = null
-      let contentDiv: HTMLElement | null = null
-      let reactRoot: any = null
-
-      // Enviar mensaje y recibir respuesta con streaming
-      await chatbot.sendMessage(contextualMessage, (chunk) => {
-        fullContent += chunk
-
-        // Detectar inicio de <think>
-        if (fullContent.includes('<think>') && !isInThinkTag) {
-          isInThinkTag = true
-          const parts = fullContent.split('<think>')
-          regularContent = parts[0]
-          thinkContent = parts[1] || ''
-
-          // Crear bloque de pensamiento si no existe
-          if (!thinkBlock) {
-            thinkBlock = createThinkingBlock()
-            assistantMessageDiv.appendChild(thinkBlock)
-          }
-        }
-
-        // Detectar fin de </think>
-        if (fullContent.includes('</think>') && isInThinkTag) {
-          isInThinkTag = false
-          const parts = fullContent.split('</think>')
-          const beforeClose = parts[0]
-          const afterClose = parts[1] || ''
-
-          // Extraer contenido del think
-          if (beforeClose.includes('<think>')) {
-            thinkContent = beforeClose.split('<think>')[1]
-          }
-
-          // Actualizar bloque de pensamiento con contenido completo
-          if (thinkBlock) {
-            updateThinkingBlock(thinkBlock, thinkContent, true)
-          }
-
-          // Crear div para contenido regular si no existe
-          if (!contentDiv) {
-            contentDiv = document.createElement('div')
-            assistantMessageDiv.appendChild(contentDiv)
-            reactRoot = createRoot(contentDiv)
-          }
-
-          regularContent = afterClose
-          // Renderizar con React usando Streamdown
-          if (reactRoot) {
-            reactRoot.render(
-              React.createElement(ChatResponse, {
-                content: regularContent,
-                isStreaming: false,
-                monaco,
-                theme: currentSettings.theme,
-                fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`,
-                fontSize: currentSettings.fontSize,
-                lineHeight: calculateLineHeight(currentSettings.fontSize),
-              }),
-            )
-          }
-        } else if (isInThinkTag) {
-          // Actualizar contenido de think
-          const parts = fullContent.split('<think>')
-          if (parts.length > 1) {
-            thinkContent = parts[1]
-            if (thinkBlock) {
-              updateThinkingBlock(thinkBlock, thinkContent, false)
-            }
-          }
-        } else {
-          // Actualizar contenido regular
-          if (!contentDiv) {
-            contentDiv = document.createElement('div')
-            assistantMessageDiv.appendChild(contentDiv)
-            reactRoot = createRoot(contentDiv)
-          }
-
-          // Si no hay think tag, mostrar todo
-          if (!fullContent.includes('<think>')) {
-            // Renderizar con React usando Streamdown
-            if (reactRoot) {
-              reactRoot.render(
-                React.createElement(ChatResponse, {
-                  content: fullContent,
-                  isStreaming: true,
-                  monaco,
-                  theme: currentSettings.theme,
-                  fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`,
-                  fontSize: currentSettings.fontSize,
-                  lineHeight: calculateLineHeight(currentSettings.fontSize),
-                }),
-              )
-            }
-          } else {
-            // Ya pasó el think tag, mostrar solo la parte después de </think>
-            const parts = fullContent.split('</think>')
-            if (parts.length > 1) {
-              const content = parts[1]
-              if (reactRoot) {
-                reactRoot.render(
-                  React.createElement(ChatResponse, {
-                    content: content,
-                    isStreaming: true,
-                    monaco,
-                    theme: currentSettings.theme,
-                    fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`,
-                    fontSize: currentSettings.fontSize,
-                    lineHeight: calculateLineHeight(currentSettings.fontSize),
-                  }),
-                )
-              }
-            }
-          }
-        }
-
-        chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
-      })
-
-      // Hacer scroll al final
+      const reactRoot = createRoot(contentDiv)
+      reactRoot.render(
+        React.createElement(ChatResponse, {
+          content: markdown,
+          isStreaming: false,
+          monaco,
+          theme: currentSettings.theme,
+          fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`,
+          fontSize: currentSettings.fontSize,
+          lineHeight: calculateLineHeight(currentSettings.fontSize),
+        }),
+      )
       chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
+    }
+
+    const bridge: AgentBridge = {
+      getCode: () => editor?.getValue() || '',
+      setCode: (code: string) => {
+        editor?.setValue(code)
+      },
+      language: () => 'javascript',
+      run: () => runCodeAndCollect(),
+    }
+
+    try {
+      await runAgent(message, {
+        generate: (messages, onChunk) => chatbot.generate(messages, onChunk),
+        bridge,
+        maxSteps: 6,
+        ui: {
+          status: showStatus,
+          clearStatus,
+          step: renderAgentStep,
+          finalAnswer: renderAssistantMarkdown,
+        },
+      })
     } catch (error: any) {
-      console.error('Error sending message:', error)
-      typingIndicator.remove()
-      addChatMessage('assistant', `Error: ${error.message}`)
+      console.error('Error running agent:', error)
+      clearStatus()
+      addChatMessage('assistant', `Error: ${error?.message ?? String(error)}`)
     } finally {
-      // Rehabilitar input
+      clearStatus()
       chatbotInput.disabled = false
       chatbotInput.readOnly = false
       chatbotSend.disabled = false
@@ -2641,127 +2606,6 @@ async function initChatbot() {
 
     chatbotMessages.appendChild(messageDiv)
     chatbotMessages.scrollTo(0, chatbotMessages.scrollHeight)
-  }
-
-  // Crear bloque de pensamiento
-  function createThinkingBlock(): HTMLElement {
-    const thinkBlock = document.createElement('div')
-    thinkBlock.className = 'thinking-block'
-    thinkBlock.dataset.startTime = String(performance.now())
-
-    const thinkHeader = document.createElement('div')
-    thinkHeader.className = 'thinking-header'
-
-    const thinkIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    thinkIcon.setAttribute('width', '16')
-    thinkIcon.setAttribute('height', '16')
-    thinkIcon.setAttribute('viewBox', '0 0 24 24')
-    thinkIcon.setAttribute('fill', 'none')
-    thinkIcon.setAttribute('stroke', 'currentColor')
-    thinkIcon.setAttribute('stroke-width', '1.5')
-    thinkIcon.setAttribute('stroke-linecap', 'round')
-    thinkIcon.setAttribute('stroke-linejoin', 'round')
-    thinkIcon.innerHTML = `
-      <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
-      <path d="M15.5 13a3.5 3.5 0 0 0 -3.5 3.5v1a3.5 3.5 0 0 0 7 0v-1.8" />
-      <path d="M8.5 13a3.5 3.5 0 0 1 3.5 3.5v1a3.5 3.5 0 0 1 -7 0v-1.8" />
-      <path d="M17.5 16a3.5 3.5 0 0 0 0 -7h-.5" />
-      <path d="M19 9.3v-2.8a3.5 3.5 0 0 0 -7 0" />
-      <path d="M6.5 16a3.5 3.5 0 0 1 0 -7h.5" />
-      <path d="M5 9.3v-2.8a3.5 3.5 0 0 1 7 0v10" />
-    `
-
-    const thinkLabel = document.createElement('span')
-    thinkLabel.className = 'thinking-label'
-    thinkLabel.textContent = 'Thinking...'
-
-    const thinkTime = document.createElement('span')
-    thinkTime.className = 'thinking-time'
-    thinkTime.textContent = ''
-
-    const chevronIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    chevronIcon.classList.add('thinking-chevron')
-    chevronIcon.setAttribute('width', '14')
-    chevronIcon.setAttribute('height', '14')
-    chevronIcon.setAttribute('viewBox', '0 0 24 24')
-    chevronIcon.setAttribute('fill', 'none')
-    chevronIcon.setAttribute('stroke', 'currentColor')
-    chevronIcon.setAttribute('stroke-width', '2')
-    chevronIcon.setAttribute('stroke-linecap', 'round')
-    chevronIcon.setAttribute('stroke-linejoin', 'round')
-    chevronIcon.innerHTML = '<path d="M6 9l6 6l6 -6" />'
-    thinkHeader.appendChild(thinkIcon)
-    thinkHeader.appendChild(thinkLabel)
-    thinkHeader.appendChild(thinkTime)
-    thinkHeader.appendChild(chevronIcon)
-
-    const thinkContent = document.createElement('div')
-    thinkContent.className = 'thinking-content loading'
-
-    thinkBlock.appendChild(thinkHeader)
-    thinkBlock.appendChild(thinkContent)
-
-    // Click para expandir/contraer
-    thinkHeader.addEventListener('click', () => {
-      thinkBlock.classList.toggle('expanded')
-    })
-
-    return thinkBlock
-  }
-
-  // Actualizar bloque de pensamiento
-  function updateThinkingBlock(thinkBlock: HTMLElement, content: string, isComplete: boolean) {
-    const thinkContent = thinkBlock.querySelector('.thinking-content')
-    const thinkLabel = thinkBlock.querySelector('.thinking-label')
-    const thinkTime = thinkBlock.querySelector('.thinking-time')
-    if (!thinkContent) return
-
-    thinkContent.textContent = content
-
-    if (isComplete) {
-      thinkContent.classList.remove('loading')
-      // Detener el intervalo si existe
-      const intervalId = thinkBlock.dataset.intervalId
-      if (intervalId) {
-        clearInterval(Number(intervalId))
-        delete thinkBlock.dataset.intervalId
-      }
-      // Cambiar label a "THOUGHT" y mostrar duración final
-      if (thinkLabel && thinkTime) {
-        const startTime = Number(thinkBlock.dataset.startTime || '0')
-        const endTime = performance.now()
-        const durationMs = endTime - startTime
-        const durationSeconds = Math.max(0, Math.round(durationMs / 1000))
-        thinkLabel.textContent = 'THOUGHT '
-        thinkTime.textContent = `${durationSeconds}s`
-      }
-      // Auto-colapsar cuando está completo
-      setTimeout(() => {
-        thinkBlock.classList.remove('expanded')
-      }, 1000)
-    } else {
-      // Expandir solo la primera vez, después respetar la decisión del usuario
-      if (!thinkBlock.dataset.intervalId) {
-        thinkBlock.classList.add('expanded')
-      }
-
-      if (thinkLabel && thinkTime) {
-        const startTime = Number(thinkBlock.dataset.startTime || '0')
-
-        // Si no hay intervalo activo, crear uno
-        if (!thinkBlock.dataset.intervalId) {
-          const intervalId = setInterval(() => {
-            const currentTime = performance.now()
-            const durationMs = currentTime - startTime
-            const durationSeconds = Math.max(0, Math.round(durationMs / 1000))
-            thinkLabel.textContent = 'Thinking... '
-            thinkTime.textContent = `${durationSeconds}s`
-          }, 100) // Actualizar cada 100ms
-
-          thinkBlock.dataset.intervalId = String(intervalId)
-        }
-      }
-    }
   }
 
   // Procesar código markdown en el contenido
