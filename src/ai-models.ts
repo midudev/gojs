@@ -12,13 +12,35 @@ type ParsedChatModelId = {
   quantization: string
 }
 
-export const AVAILABLE_CHAT_MODELS = [...prebuiltAppConfig.model_list]
-  .filter(
+// Preferimos una sola variante por modelo: la más equilibrada para el navegador
+// (q4f16 = rápida y ligera). Así evitamos duplicar cada modelo en fast/more precise.
+const PREFERRED_QUANTIZATION_ORDER = ['q4f16', 'q4f32', 'q0f16', 'q0f32']
+
+function getQuantizationRank(modelId: string): number {
+  const quantization = parseChatModelId(modelId)?.quantization ?? ''
+  const index = PREFERRED_QUANTIZATION_ORDER.findIndex((prefix) => quantization.startsWith(prefix))
+  return index === -1 ? PREFERRED_QUANTIZATION_ORDER.length : index
+}
+
+export const AVAILABLE_CHAT_MODELS = (() => {
+  const candidates = prebuiltAppConfig.model_list.filter(
     (model) =>
       (model.model_type ?? ModelType.LLM) === ModelType.LLM &&
       MODERN_CHAT_MODEL_PREFIXES.some((prefix) => model.model_id.startsWith(prefix)),
   )
-  .sort((left, right) => {
+
+  // Nos quedamos con una única variante por nombre de modelo (p. ej. "Qwen 3.5 0.8B"),
+  // eligiendo la cuantización preferida.
+  const bestByDisplayName = new Map<string, ModelRecord>()
+  for (const model of candidates) {
+    const key = getChatModelDisplayName(model)
+    const existing = bestByDisplayName.get(key)
+    if (!existing || getQuantizationRank(model.model_id) < getQuantizationRank(existing.model_id)) {
+      bestByDisplayName.set(key, model)
+    }
+  }
+
+  return [...bestByDisplayName.values()].sort((left, right) => {
     const leftVram = left.vram_required_MB ?? Number.MAX_SAFE_INTEGER
     const rightVram = right.vram_required_MB ?? Number.MAX_SAFE_INTEGER
 
@@ -28,6 +50,7 @@ export const AVAILABLE_CHAT_MODELS = [...prebuiltAppConfig.model_list]
 
     return left.model_id.localeCompare(right.model_id)
   })
+})()
 
 export const CHATBOT_APP_CONFIG = {
   ...prebuiltAppConfig,
@@ -74,18 +97,6 @@ function getChatModelSizeLabel(modelId: string): string | null {
   return 'high quality'
 }
 
-function getChatModelPrecisionLabel(modelId: string): string | null {
-  const quantization = parseChatModelId(modelId)?.quantization
-
-  if (!quantization) return null
-  if (quantization.startsWith('q4f16')) return 'fast'
-  if (quantization.startsWith('q4f32')) return 'more precise'
-  if (quantization.startsWith('q0f16')) return 'unquantized'
-  if (quantization.startsWith('q0f32')) return 'unquantized, more precise'
-
-  return quantization.replace(/_/g, ' ')
-}
-
 export function getChatModelDisplayName(modelOrId: ModelRecord | string): string {
   const modelId = typeof modelOrId === 'string' ? modelOrId : modelOrId.model_id
 
@@ -103,11 +114,7 @@ export function getChatModelDisplayName(modelOrId: ModelRecord | string): string
 }
 
 export function getChatModelLabel(model: ModelRecord): string {
-  const parts = [
-    getChatModelDisplayName(model),
-    getChatModelSizeLabel(model.model_id),
-    getChatModelPrecisionLabel(model.model_id),
-  ]
+  const parts = [getChatModelDisplayName(model), getChatModelSizeLabel(model.model_id)]
 
   if (typeof model.vram_required_MB === 'number') {
     parts.push(`${(model.vram_required_MB / 1024).toFixed(1)} GB VRAM`)

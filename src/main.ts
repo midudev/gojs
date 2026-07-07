@@ -18,10 +18,11 @@ import {
   updateSetting,
   calculateLineHeight,
   type LayoutOrientation,
+  type RenderWhitespace,
   type Theme,
 } from './storage'
 import { initPrettierWorker, formatCode, destroyPrettierWorker } from './prettier'
-import { injectExpressionLogging, lineMap } from './console'
+import { injectExpressionLogging, transformImports, lineMap } from './console'
 import { formatConsoleValueText, isSerializedConsoleValue } from './console-values'
 import { initHeaderPopovers } from './popovers'
 import { initTabs } from './tabs'
@@ -410,6 +411,16 @@ async function initEditor() {
       enabled: currentSettings.minimap,
     },
     lineNumbers: currentSettings.lineNumbers ? 'on' : 'off',
+    wordWrap: currentSettings.wordWrap ? 'on' : 'off',
+    fontLigatures: currentSettings.fontLigatures,
+    stickyScroll: {
+      enabled: currentSettings.stickyScroll,
+    },
+    guides: {
+      indentation: currentSettings.indentGuides,
+      highlightActiveIndentation: currentSettings.indentGuides,
+    },
+    renderWhitespace: currentSettings.renderWhitespace,
     scrollbar: {
       verticalScrollbarSize: 8,
       horizontalScrollbarSize: 8,
@@ -1055,13 +1066,17 @@ async function runCode() {
   }
 
   try {
-    // Inyectar logging de expresiones en el código
-    const modifiedCode = injectExpressionLogging(code, { enabled: currentSettings.autoLogExpressions })
+    // Reescribir imports estáticos a import() dinámicos (permite ESM desde CDN)
+    const codeWithImports = transformImports(code)
 
-    // Inicializar worker si no existe
-    if (!executorWorker) {
-      initExecutorWorker()
-    }
+    // Inyectar logging de expresiones en el código
+    const modifiedCode = injectExpressionLogging(codeWithImports, { enabled: currentSettings.autoLogExpressions })
+
+    // Recrear siempre el worker para cada ejecución. Así garantizamos un contexto
+    // limpio y, sobre todo, matamos cualquier callback asíncrono (timers, promesas)
+    // de una ejecución anterior que, de lo contrario, escribiría logs duplicados
+    // en la salida ya limpiada (ver issue #16).
+    initExecutorWorker()
 
     // Configurar manejo de mensajes del worker
     executorWorker!.onmessage = (e: MessageEvent) => {
@@ -1732,6 +1747,11 @@ async function start() {
     const aiStorageUsage = $('#setting-ai-storage-usage') as HTMLElement
     const minimapCheck = $('#setting-minimap') as HTMLInputElement
     const lineNumbersCheck = $('#setting-line-numbers') as HTMLInputElement
+    const wordWrapCheck = $('#setting-word-wrap') as HTMLInputElement
+    const fontLigaturesCheck = $('#setting-font-ligatures') as HTMLInputElement
+    const stickyScrollCheck = $('#setting-sticky-scroll') as HTMLInputElement
+    const indentGuidesCheck = $('#setting-indent-guides') as HTMLInputElement
+    const renderWhitespaceSelect = $('#setting-render-whitespace') as HTMLSelectElement
     const debounceInput = $('#setting-debounce') as HTMLInputElement
     const autoLogExpressionsCheck = $('#setting-auto-log-expressions') as HTMLInputElement
     const formatPasteCheck = $('#setting-format-on-paste') as HTMLInputElement
@@ -1861,6 +1881,11 @@ async function start() {
     if (aiModelSelect) aiModelSelect.value = getVisibleChatModelId(currentSettings.aiModelId)
     if (minimapCheck) minimapCheck.checked = currentSettings.minimap
     if (lineNumbersCheck) lineNumbersCheck.checked = currentSettings.lineNumbers
+    if (wordWrapCheck) wordWrapCheck.checked = currentSettings.wordWrap
+    if (fontLigaturesCheck) fontLigaturesCheck.checked = currentSettings.fontLigatures
+    if (stickyScrollCheck) stickyScrollCheck.checked = currentSettings.stickyScroll
+    if (indentGuidesCheck) indentGuidesCheck.checked = currentSettings.indentGuides
+    if (renderWhitespaceSelect) renderWhitespaceSelect.value = currentSettings.renderWhitespace
     if (debounceInput) debounceInput.value = String(currentSettings.debounceDelay)
     if (autoLogExpressionsCheck) autoLogExpressionsCheck.checked = currentSettings.autoLogExpressions
     if (formatPasteCheck) formatPasteCheck.checked = currentSettings.formatOnPaste
@@ -1992,6 +2017,41 @@ async function start() {
       const enabled = (e.target as HTMLInputElement).checked
       currentSettings = updateSetting(currentSettings, 'lineNumbers', enabled)
       editor?.updateOptions({ lineNumbers: currentSettings.lineNumbers ? 'on' : 'off' })
+    })
+
+    wordWrapCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      currentSettings = updateSetting(currentSettings, 'wordWrap', enabled)
+      editor?.updateOptions({ wordWrap: currentSettings.wordWrap ? 'on' : 'off' })
+    })
+
+    fontLigaturesCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      currentSettings = updateSetting(currentSettings, 'fontLigatures', enabled)
+      editor?.updateOptions({ fontLigatures: currentSettings.fontLigatures })
+    })
+
+    stickyScrollCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      currentSettings = updateSetting(currentSettings, 'stickyScroll', enabled)
+      editor?.updateOptions({ stickyScroll: { enabled: currentSettings.stickyScroll } })
+    })
+
+    indentGuidesCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      currentSettings = updateSetting(currentSettings, 'indentGuides', enabled)
+      editor?.updateOptions({
+        guides: {
+          indentation: currentSettings.indentGuides,
+          highlightActiveIndentation: currentSettings.indentGuides,
+        },
+      })
+    })
+
+    renderWhitespaceSelect?.addEventListener('change', (e) => {
+      const value = (e.target as HTMLSelectElement).value as RenderWhitespace
+      currentSettings = updateSetting(currentSettings, 'renderWhitespace', value)
+      editor?.updateOptions({ renderWhitespace: currentSettings.renderWhitespace })
     })
 
     debounceInput?.addEventListener('input', (e) => {

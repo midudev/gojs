@@ -26,6 +26,10 @@ export type FontFamily = (typeof AVAILABLE_FONTS)[number]
 
 export type LayoutOrientation = 'horizontal' | 'vertical'
 
+export const RENDER_WHITESPACE_OPTIONS = ['none', 'boundary', 'selection', 'trailing', 'all'] as const
+
+export type RenderWhitespace = (typeof RENDER_WHITESPACE_OPTIONS)[number]
+
 export interface PrettierSettings {
   autoFormat: boolean
   printWidth: number
@@ -47,6 +51,11 @@ export interface EditorSettings {
   aiModelId: string
   minimap: boolean
   lineNumbers: boolean
+  wordWrap: boolean
+  fontLigatures: boolean
+  stickyScroll: boolean
+  indentGuides: boolean
+  renderWhitespace: RenderWhitespace
   debounceDelay: number
   autoLogExpressions: boolean
   formatOnPaste: boolean
@@ -63,6 +72,11 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   aiModelId: DEFAULT_CHATBOT_MODEL_ID,
   minimap: false,
   lineNumbers: true,
+  wordWrap: false,
+  fontLigatures: true,
+  stickyScroll: true,
+  indentGuides: true,
+  renderWhitespace: 'selection',
   debounceDelay: 800,
   autoLogExpressions: true,
   formatOnPaste: true,
@@ -129,6 +143,13 @@ function isValidLayoutOrientation(value: unknown): value is LayoutOrientation {
 }
 
 /**
+ * Valida el modo de renderizado de espacios en blanco
+ */
+function isValidRenderWhitespace(value: unknown): value is RenderWhitespace {
+  return RENDER_WHITESPACE_OPTIONS.includes(value as RenderWhitespace)
+}
+
+/**
  * Valida y normaliza las configuraciones cargadas
  */
 function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
@@ -145,6 +166,13 @@ function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
         : DEFAULT_SETTINGS.aiModelId,
     minimap: validateBoolean(settings.minimap, DEFAULT_SETTINGS.minimap),
     lineNumbers: validateBoolean(settings.lineNumbers, DEFAULT_SETTINGS.lineNumbers),
+    wordWrap: validateBoolean(settings.wordWrap, DEFAULT_SETTINGS.wordWrap),
+    fontLigatures: validateBoolean(settings.fontLigatures, DEFAULT_SETTINGS.fontLigatures),
+    stickyScroll: validateBoolean(settings.stickyScroll, DEFAULT_SETTINGS.stickyScroll),
+    indentGuides: validateBoolean(settings.indentGuides, DEFAULT_SETTINGS.indentGuides),
+    renderWhitespace: isValidRenderWhitespace(settings.renderWhitespace)
+      ? settings.renderWhitespace
+      : DEFAULT_SETTINGS.renderWhitespace,
     debounceDelay: validateNumber(settings.debounceDelay, 100, 5000, DEFAULT_SETTINGS.debounceDelay),
     autoLogExpressions: validateBoolean(settings.autoLogExpressions, DEFAULT_SETTINGS.autoLogExpressions),
     formatOnPaste: validateBoolean(settings.formatOnPaste, DEFAULT_SETTINGS.formatOnPaste),
