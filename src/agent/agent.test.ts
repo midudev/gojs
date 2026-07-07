@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { parseAction, runAgent, type AgentBridge, type AgentRunResult, type AgentUI } from './agent'
+import { computeLineDiff, parseAction, runAgent, type AgentBridge, type AgentRunResult, type AgentUI } from './agent'
+
+describe('computeLineDiff', () => {
+  it('counts added and removed lines', () => {
+    const diff = computeLineDiff('a\nb\nc', 'a\nB\nc\nd')
+    expect(diff.removed).toBe(1) // b
+    expect(diff.added).toBe(2) // B, d
+  })
+
+  it('reports no changes for identical code', () => {
+    const diff = computeLineDiff('a\nb', 'a\nb')
+    expect(diff.added).toBe(0)
+    expect(diff.removed).toBe(0)
+  })
+})
 import type { ChatMessage } from '../chatbot'
 
 describe('parseAction', () => {
@@ -54,8 +68,9 @@ function makeHarness(initialCode = '') {
   }
 
   const ui: AgentUI = {
-    step: (kind) => {
-      events.push(`step:${kind}`)
+    edit: (info) => events.push(`edit:+${info.added}-${info.removed}`),
+    run: () => {
+      events.push('step:run')
       return { update: (_detail, s) => events.push(`update:${s ?? ''}`) }
     },
     finalAnswer: (md) => events.push(`final:${md.slice(0, 20)}`),
@@ -83,8 +98,8 @@ describe('runAgent loop', () => {
     const scripted: string[] = [
       '<action>write</action>\n```js\nconst x = 5\nconsole.log(x)\n```',
       '<action>run</action>',
-      // tras el primer run (error) el agente reescribe
-      '<action>write</action>\n```js\nconst x = 5\nconsole.log(x)\n```',
+      // tras el primer run (error) el agente reescribe (cambio distinto)
+      '<action>write</action>\n```js\nconst x = 5\nconsole.log(x * 1)\n```',
       '<action>run</action>',
       '<action>final</action>\nArreglado el typo `cosnt` -> `const`.',
     ]
@@ -93,12 +108,13 @@ describe('runAgent loop', () => {
 
     await runAgent('arregla el error', { generate, bridge, ui, maxSteps: 8 })
 
-    // Aplicó ediciones, ejecutó y terminó con una respuesta final.
+    // Aplicó dos ediciones, ejecutó y terminó con una respuesta final.
     expect(events.filter((e) => e === 'setCode').length).toBe(2)
+    expect(events.some((e) => e.startsWith('edit:'))).toBe(true)
     expect(events).toContain('run:error')
     expect(events).toContain('run:ok')
     expect(events.some((e) => e.startsWith('final:'))).toBe(true)
-    expect(state.code).toBe('const x = 5\nconsole.log(x)')
+    expect(state.code).toBe('const x = 5\nconsole.log(x * 1)')
   })
 
   it('stops after maxSteps to avoid infinite loops', async () => {

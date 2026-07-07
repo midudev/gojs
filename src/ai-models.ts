@@ -2,6 +2,8 @@ import { ModelType, prebuiltAppConfig, type AppConfig, type ModelRecord } from '
 
 export const DEFAULT_CHATBOT_MODEL_ID = 'Qwen3.5-0.8B-q4f16_1-MLC'
 export const CHROME_PROMPT_API_MODEL_ID = 'chrome-prompt-api'
+// Selección "Auto": dejamos que la app decida el mejor modelo disponible.
+export const AUTO_MODEL_ID = 'auto'
 
 const MODERN_CHAT_MODEL_PREFIXES = ['Qwen3.5-']
 const CHAT_MODEL_ID_PATTERN = /^(Qwen)(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?B)-(.+)-MLC$/
@@ -129,4 +131,38 @@ export function getChatModelLabel(model: ModelRecord): string {
 
 export function getChromePromptApiModelLabel(): string {
   return `${getChatModelDisplayName(CHROME_PROMPT_API_MODEL_ID)} · Prompt API · no download`
+}
+
+export function isAutoModelId(modelId: string | null | undefined): boolean {
+  return modelId === AUTO_MODEL_ID
+}
+
+/**
+ * Elige el mejor modelo WebLLM que probablemente pueda cargar este dispositivo,
+ * usando la memoria disponible como aproximación (no hay API fiable de VRAM de GPU).
+ * Es conservador a propósito: Auto debe cargar sin sustos.
+ */
+export function pickBestDownloadableModelId(): string {
+  const deviceMemoryGb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4
+  // Presupuesto de VRAM estimado: la mitad de la memoria del dispositivo, con margen.
+  const vramBudgetMb = deviceMemoryGb * 1024 * 0.5
+
+  // AVAILABLE_CHAT_MODELS viene ordenado ascendente por VRAM: cogemos el mayor que quepa.
+  let best = AVAILABLE_CHAT_MODELS[0]
+  for (const model of AVAILABLE_CHAT_MODELS) {
+    const vram = model.vram_required_MB ?? Number.MAX_SAFE_INTEGER
+    if (vram <= vramBudgetMb) best = model
+  }
+
+  return best?.model_id ?? DEFAULT_CHATBOT_MODEL_ID
+}
+
+/**
+ * Resuelve la selección "Auto" a un modelo concreto:
+ * - Si el modelo del sistema (Chrome Prompt API) está disponible, ese (sin descarga).
+ * - Si no, el mejor modelo descargable que estimamos que este equipo puede cargar.
+ */
+export function resolveAutoModelId(chromePromptApiAvailable: boolean): string {
+  if (chromePromptApiAvailable) return CHROME_PROMPT_API_MODEL_ID
+  return pickBestDownloadableModelId()
 }

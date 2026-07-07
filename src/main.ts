@@ -3,13 +3,16 @@ import './fonts.css'
 
 import { init } from 'modern-monaco'
 import {
+  AUTO_MODEL_ID,
   AVAILABLE_CHAT_MODELS,
   CHROME_PROMPT_API_MODEL_ID,
   getChatModelDisplayName,
   getChatModelLabel,
   getChatModelRecord,
   getChromePromptApiModelLabel,
+  isAutoModelId,
   isChromePromptApiModelId,
+  resolveAutoModelId,
 } from './ai-models'
 import { INITIAL_CODE } from './consts'
 import {
@@ -33,7 +36,7 @@ import './resize-panels'
 import { createRoot } from 'react-dom/client'
 import { ChatResponse } from './ChatResponse'
 import React from 'react'
-import { runAgent, type AgentBridge, type AgentRunResult } from './agent/agent'
+import { runAgent, type AgentBridge, type AgentEditInfo, type AgentRunResult } from './agent/agent'
 import { isChromePromptApiAvailable } from './prompt-api'
 // @ts-ignore
 import ExecutorWorker from './executor-worker?worker'
@@ -156,11 +159,247 @@ function enableChromePromptApiAssistantIfAvailable() {
 }
 
 function getVisibleChatModelId(modelId: string): string {
+  if (isAutoModelId(modelId)) {
+    return resolveModelChoice(modelId)
+  }
+
   if (isChromePromptApiModelId(modelId) && !chromePromptApiModelAvailable) {
     return AVAILABLE_CHAT_MODELS[0]?.model_id ?? modelId
   }
 
   return modelId
+}
+
+// Resuelve la elección del usuario (que puede ser "auto") a un modelo concreto.
+function resolveModelChoice(choice: string): string {
+  if (isAutoModelId(choice)) {
+    return resolveAutoModelId(chromePromptApiModelAvailable)
+  }
+  return choice
+}
+
+// Etiqueta corta para el selector del composer (estilo Cursor).
+function getModelChoiceShortLabel(choice: string): string {
+  if (isAutoModelId(choice)) return 'Auto'
+  if (isChromePromptApiModelId(choice)) return 'System'
+  const record = getChatModelRecord(choice)
+  return record ? getChatModelDisplayName(record) : 'Auto'
+}
+
+// Marca el panel como vacío (composer arriba) o con conversación (composer abajo).
+function updateChatEmptyState() {
+  const panel = $('#chatbot-panel') as HTMLElement | null
+  const messages = $('#chatbot-messages') as HTMLElement | null
+  if (!panel || !messages) return
+  const hasConversation = !!messages.querySelector('.chatbot-message, .agent-run')
+  panel.classList.toggle('is-empty', !hasConversation)
+}
+
+// ---------------------------------------------------------------------------
+// Selección del editor como contexto del agente (chip en el composer)
+// ---------------------------------------------------------------------------
+interface PendingSelection {
+  text: string
+  startLine: number
+  endLine: number
+  label: string
+}
+
+let pendingSelection: PendingSelection | null = null
+
+function getActiveTabLabel(): string {
+  const activeTab = document.querySelector('.tab-item.active') as HTMLElement | null
+  const label = activeTab?.getAttribute('title')?.trim() || activeTab?.textContent?.trim()
+  return label && label.length ? label : 'code'
+}
+
+function renderSelectionChip() {
+  const container = $('#chatbot-context') as HTMLElement | null
+  if (!container) return
+
+  if (!pendingSelection) {
+    container.hidden = true
+    container.innerHTML = ''
+    return
+  }
+
+  const { label, startLine, endLine } = pendingSelection
+  const range = startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`
+  container.hidden = false
+  container.innerHTML = `
+    <span class="chatbot-context-chip">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 5l0 14"/><path d="M18 13l-6 6"/><path d="M6 13l6 6"/></svg>
+      <span class="chatbot-context-name">${escapeHtml(label)}</span>
+      <span class="chatbot-context-range">(${range})</span>
+      <button class="chatbot-context-remove" type="button" title="Remove context" aria-label="Remove context">×</button>
+    </span>`
+
+  container.querySelector('.chatbot-context-remove')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    pendingSelection = null
+    renderSelectionChip()
+  })
+}
+
+// Devuelve el contexto de la selección (si hay) formateado para el agente y limpia el chip.
+function takePendingSelection(): string | null {
+  if (!pendingSelection) return null
+  const { text, startLine, endLine, label } = pendingSelection
+  const range = startLine === endLine ? `line ${startLine}` : `lines ${startLine}-${endLine}`
+  pendingSelection = null
+  renderSelectionChip()
+  return `The user selected this code from ${label} (${range}):\n\`\`\`\n${text}\n\`\`\``
+}
+
+// Escucha la selección del editor y actualiza el chip de contexto.
+function setupSelectionContext() {
+  if (!editor) return
+  editor.onDidChangeCursorSelection(() => {
+    const selection = editor.getSelection?.()
+    if (!selection || selection.isEmpty?.()) return
+    const model = editor.getModel?.()
+    const text = model?.getValueInRange(selection) ?? ''
+    if (!text.trim()) return
+    pendingSelection = {
+      text,
+      startLine: selection.startLineNumber,
+      endLine: selection.endLineNumber,
+      label: getActiveTabLabel(),
+    }
+    renderSelectionChip()
+  })
+}
+
+// Elección de modelo del usuario en el composer (puede ser "auto"), independiente
+// del modelo concreto que finalmente se carga. Se persiste aparte para no depender
+// de storage.ts.
+const MODEL_CHOICE_STORAGE_KEY = 'gojs-model-choice'
+let userModelChoice: string = (() => {
+  try {
+    return localStorage.getItem(MODEL_CHOICE_STORAGE_KEY) || AUTO_MODEL_ID
+  } catch {
+    return AUTO_MODEL_ID
+  }
+})()
+
+function setUserModelChoice(choice: string) {
+  userModelChoice = choice
+  try {
+    localStorage.setItem(MODEL_CHOICE_STORAGE_KEY, choice)
+  } catch {
+    /* almacenamiento no disponible */
+  }
+}
+
+// Mientras un envío espera a que el modelo cargue, este callback recibe el progreso
+// para mostrarlo en el mensaje ("Preparing model…", "Downloading model… 42%") en vez
+// de una pantalla de carga. Es null cuando la carga es en segundo plano (silenciosa).
+let modelLoadStatusUpdater: ((text: string) => void) | null = null
+
+// true mientras el agente está procesando un mensaje (evita reentradas / doble envío).
+let agentBusy = false
+
+// Refleja la elección actual en la etiqueta del selector del composer.
+function updateComposerModelLabel() {
+  const label = $('#chatbot-model-label') as HTMLElement | null
+  if (label) label.textContent = getModelChoiceShortLabel(userModelChoice)
+}
+
+// Asegura que el modelo elegido (resuelto) esté cargado; devuelve true si quedó listo.
+async function ensureModelLoadedForChoice(): Promise<boolean> {
+  const target = resolveModelChoice(userModelChoice)
+  const state = chatbot.getState()
+
+  if (state.isReady && state.currentModelId === target) return true
+
+  try {
+    await loadChatbotModel(target)
+    return chatbot.getState().isReady
+  } catch (error) {
+    console.error('Error loading model:', error)
+    return false
+  }
+}
+
+// Construye y cablea el selector de modelo del composer (dropdown estilo Cursor).
+function setupComposerModelSelector() {
+  const trigger = $('#chatbot-model-trigger') as HTMLButtonElement | null
+  const menu = $('#chatbot-model-menu') as HTMLElement | null
+  if (!trigger || !menu) return
+
+  const closeMenu = () => {
+    menu.hidden = true
+    trigger.setAttribute('aria-expanded', 'false')
+  }
+
+  const buildOptions = () => {
+    const choices: Array<{ id: string; name: string; meta: string }> = [
+      { id: AUTO_MODEL_ID, name: 'Auto', meta: 'We pick the best model for you' },
+    ]
+
+    if (chromePromptApiModelAvailable) {
+      choices.push({ id: CHROME_PROMPT_API_MODEL_ID, name: 'Chrome system model', meta: 'Prompt API · no download' })
+    }
+
+    for (const model of AVAILABLE_CHAT_MODELS) {
+      const name = getChatModelDisplayName(model)
+      const meta = getChatModelLabel(model).replace(`${name} · `, '')
+      choices.push({ id: model.model_id, name, meta })
+    }
+
+    menu.innerHTML = choices
+      .map(
+        (choice) => `
+        <button type="button" class="chatbot-model-option${choice.id === userModelChoice ? ' selected' : ''}" data-model-id="${escapeHtml(choice.id)}" role="option">
+          <span class="chatbot-model-option-name">${escapeHtml(choice.name)}</span>
+          <span class="chatbot-model-option-meta">${escapeHtml(choice.meta)}</span>
+        </button>`,
+      )
+      .join('')
+  }
+
+  trigger.addEventListener('click', (event) => {
+    event.stopPropagation()
+    if (menu.hidden) {
+      buildOptions()
+      menu.hidden = false
+      trigger.setAttribute('aria-expanded', 'true')
+    } else {
+      closeMenu()
+    }
+  })
+
+  menu.addEventListener('click', (event) => {
+    const option = (event.target as HTMLElement).closest('.chatbot-model-option') as HTMLElement | null
+    if (!option) return
+    const id = option.dataset.modelId
+    if (!id) return
+
+    setUserModelChoice(id)
+    updateComposerModelLabel()
+    closeMenu()
+
+    // Si el modelo resuelto ya está disponible (system) o instalado, cárgalo ya.
+    void (async () => {
+      const target = resolveModelChoice(id)
+      const installed = await chatbot.isModelInstalled(target).catch(() => false)
+      if (isChromePromptApiModelId(target) || installed) {
+        await ensureModelLoadedForChoice()
+      }
+    })()
+  })
+
+  document.addEventListener('click', (event) => {
+    if (!menu.hidden && !menu.contains(event.target as Node) && event.target !== trigger) {
+      closeMenu()
+    }
+  })
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeMenu()
+  })
+
+  updateComposerModelLabel()
 }
 
 function getChatModelOptionsHtml(selectedModelId: string): string {
@@ -205,7 +444,6 @@ function shouldAutoLoadChatModel(modelId: string): boolean {
 
 async function loadChatbotModel(modelId: string) {
   currentSettings = updateSetting(currentSettings, 'aiModelId', modelId)
-  renderChatbotLoadingUI(0, modelId)
 
   const state = chatbot.getState()
   const forceReload = state.isReady && state.currentModelId === modelId
@@ -469,6 +707,7 @@ async function initEditor() {
   })
 
   setupEditorEvents()
+  setupSelectionContext()
 
   // Aplicar el tema inicial con la misma ruta que los cambios en settings.
   await changeTheme(currentSettings.theme)
@@ -1018,7 +1257,12 @@ function scrapeConsoleOutput(outputElement: HTMLElement): AgentRunResult {
     lines.push(lineNumber ? `${prefix}${content} (${lineNumber})` : `${prefix}${content}`)
   })
 
-  const hasError = !!outputElement.querySelector('.log-entry.error')
+  // Solo es un fallo de ejecución un error SIN número de línea (excepción no capturada
+  // o timeout). Las llamadas a console.error/console.warn del usuario llevan número de
+  // línea y son salida normal del programa, no un error que el agente deba "arreglar".
+  const hasError = [...outputElement.querySelectorAll('.log-entry.error')].some(
+    (entry) => !entry.querySelector('.log-line-number'),
+  )
   return { output: lines.join('\n'), hasError }
 }
 
@@ -2280,76 +2524,30 @@ async function initChatbot() {
   if (!chatbotInitialized) {
     chatbotInitialized = true
 
+    setupComposerModelSelector()
+
     // Configurar listener de estado
     chatbot.setStateChangeListener((state: ChatbotState) => {
       syncChatbotClearVisibility(state)
 
-      if (state.isInitializing) {
-        const loadingElement = $('#chatbot-loading') as HTMLElement | null
-
-        if (!loadingElement) {
-          renderChatbotLoadingUI(state.loadProgress, state.currentModelId, state.downloadSpeedBytesPerSecond)
-        }
-
-        const loadingProgressBar = $('#loading-progress-bar') as HTMLElement | null
-        const loadingProgressText = $('#loading-progress-text') as HTMLElement | null
-        const loadingDownloadSpeed = $('#loading-download-speed') as HTMLElement | null
-
-        if (loadingProgressBar) {
-          loadingProgressBar.style.width = `${state.loadProgress}%`
-        }
-
-        if (loadingProgressText) {
-          loadingProgressText.textContent = `${Math.round(state.loadProgress)}%`
-        }
-
-        if (loadingDownloadSpeed) {
-          const downloadSpeedText = formatDownloadSpeed(state.downloadSpeedBytesPerSecond)
-          loadingDownloadSpeed.textContent = downloadSpeedText
-          loadingDownloadSpeed.hidden = downloadSpeedText === ''
-        }
-
-        chatbotInput.disabled = true
-        chatbotInput.readOnly = false
-        chatbotSend.disabled = true
-      } else if (state.isReady) {
-        const loadingElement = $('#chatbot-loading') as HTMLElement | null
-
-        if (loadingElement) {
-          loadingElement.remove()
-        }
-
-        const modelPicker = $('#chatbot-model-picker') as HTMLElement | null
-        if (modelPicker) {
-          modelPicker.remove()
-        }
-
-        chatbotInput.disabled = false
-        chatbotInput.readOnly = false
-        chatbotSend.disabled = false
-
-        if (!chatbotMessages.querySelector('.chatbot-message')) {
-          const modelName = getChatModelDisplayNameById(state.currentModelId)
-
-          addChatMessage(
-            'assistant',
-            `Hello! I am your AI assistant. Current model: ${modelName}. What can I help you with?`,
-          )
-        }
-      } else if (state.error) {
-        renderChatbotModelPickerUI(state.error)
-        chatbotInput.disabled = true
-        chatbotInput.readOnly = false
-        chatbotSend.disabled = true
-      } else {
-        chatbotInput.disabled = true
-        chatbotInput.readOnly = false
-        chatbotSend.disabled = true
-
-        if (!$('#chatbot-model-picker') && !chatbotMessages.querySelector('.chatbot-message')) {
-          renderChatbotModelPickerUI()
-        }
+      // La carga del modelo es siempre en segundo plano (sin pantalla de carga). Si
+      // un envío está esperando, reflejamos el progreso en el mensaje de estado.
+      if (state.isInitializing && modelLoadStatusUpdater) {
+        const pct = Math.round(state.loadProgress)
+        modelLoadStatusUpdater(pct > 0 ? `Downloading model… ${pct}%` : 'Preparing model…')
       }
+
+      // El composer siempre es usable: se puede escribir aunque el modelo no esté
+      // cargado (al enviar se resuelve y carga).
+      const modelPicker = $('#chatbot-model-picker') as HTMLElement | null
+      if (modelPicker) modelPicker.remove()
+      const loadingElement = $('#chatbot-loading') as HTMLElement | null
+      if (loadingElement) loadingElement.remove()
+      chatbotInput.disabled = false
+      if (!agentBusy) chatbotSend.disabled = false
+
+      updateComposerModelLabel()
+      updateChatEmptyState()
 
       void refreshChatbotModelPickerStatus()
 
@@ -2399,125 +2597,203 @@ async function initChatbot() {
     // Limpiar conversación
     chatbotClear.addEventListener('click', () => {
       chatbot.clearHistory()
-      // Limpiar UI (mantener solo mensaje de bienvenida si el modelo esta listo)
       if (chatbotMessages) {
         chatbotMessages.innerHTML = ''
-        const state = chatbot.getState()
-        syncChatbotClearVisibility(state)
-
-        if (state.isReady) {
-          addChatMessage(
-            'assistant',
-            `Hello! I am your AI assistant. Current model: ${getChatModelDisplayNameById(state.currentModelId)}. What can I help you with?`,
-          )
-        } else {
-          renderChatbotModelPickerUI()
-        }
+        syncChatbotClearVisibility(chatbot.getState())
+        updateChatEmptyState()
+        focusChatbotInput()
       }
     })
   }
 
   const chatbotState = chatbot.getState()
   syncChatbotClearVisibility(chatbotState)
+  updateComposerModelLabel()
+  updateChatEmptyState()
 
-  if (chatbotState.isReady && chatbotState.currentModelId === currentSettings.aiModelId) {
-    chatbotInput.disabled = false
-    chatbotInput.readOnly = false
-    chatbotSend.disabled = false
-
-    if (!chatbotMessages.querySelector('.chatbot-message')) {
-      addChatMessage(
-        'assistant',
-        `Hello! I am your AI assistant. Current model: ${getChatModelDisplayNameById(chatbotState.currentModelId)}. What can I help you with?`,
-      )
-    }
-
-    return
-  }
-
-  if (chatbotState.isInitializing) {
-    chatbotInput.disabled = true
-    chatbotInput.readOnly = false
-    chatbotSend.disabled = true
-    renderChatbotLoadingUI(
-      chatbotState.loadProgress,
-      chatbotState.currentModelId,
-      chatbotState.downloadSpeedBytesPerSecond,
-    )
-    return
-  }
-
-  chatbotInput.disabled = true
+  // El composer siempre está listo para escribir. La carga del modelo es en segundo
+  // plano y silenciosa (sin pantalla de carga); si al enviar aún no está, el mensaje
+  // mostrará "Preparing model…" / "Downloading model… X%".
+  chatbotInput.disabled = false
   chatbotInput.readOnly = false
-  chatbotSend.disabled = true
+  chatbotSend.disabled = false
 
-  const selectedModelInstalled = await chatbot.isModelInstalled(currentSettings.aiModelId).catch(() => false)
-
-  if (selectedModelInstalled && shouldAutoLoadChatModel(currentSettings.aiModelId)) {
-    await loadChatbotModel(currentSettings.aiModelId)
-    return
+  if (!chatbotState.isReady && !chatbotState.isInitializing) {
+    // Precarga en segundo plano solo si no requiere descarga (modelo del sistema) o
+    // ya está instalado. Los modelos grandes se descargan al primer envío.
+    const target = resolveModelChoice(userModelChoice)
+    const targetInstalled = await chatbot.isModelInstalled(target).catch(() => false)
+    if (isChromePromptApiModelId(target) || targetInstalled) {
+      void ensureModelLoadedForChoice()
+    }
   }
-
-  renderChatbotModelPickerUI()
 
   // Función para enviar mensaje (el agente decide si solo responde o actúa sobre el código)
   async function sendChatMessage() {
     const message = chatbotInput.value.trim()
-    if (!message || !chatbot.getState().isReady) {
+    if (!message || agentBusy) {
       focusChatbotInput()
       return
     }
 
+    agentBusy = true
+
+    // Contexto de la selección del editor (si hay), y limpiamos el chip.
+    const selectionContext = takePendingSelection()
+
     // Mostrar el mensaje del usuario y limpiar el input
     addChatMessage('user', message)
+    updateChatEmptyState()
     chatbotInput.value = ''
     chatbotInput.style.height = 'auto'
-    focusChatbotInput()
     chatbotInput.readOnly = true
     chatbotSend.disabled = true
 
-    // Indicador de estado (typing)
-    let typingIndicator: HTMLElement | null = null
-    const showStatus = () => {
-      if (!typingIndicator) {
-        typingIndicator = document.createElement('div')
-        typingIndicator.className = 'chatbot-typing-indicator'
-        typingIndicator.innerHTML = '<span></span><span></span><span></span>'
-        chatbotMessages?.appendChild(typingIndicator)
+    // Línea de estado dinámica al final de la conversación ("Planning next moves…",
+    // "Editing the code…", "Running the code…", "Downloading model… X%").
+    let statusEl: HTMLElement | null = null
+    const showStatus = (text: string) => {
+      if (!statusEl) {
+        statusEl = document.createElement('div')
+        statusEl.className = 'agent-status'
       }
+      statusEl.textContent = text
+      chatbotMessages?.appendChild(statusEl)
       chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
     }
     const clearStatus = () => {
-      typingIndicator?.remove()
-      typingIndicator = null
+      statusEl?.remove()
+      statusEl = null
     }
 
-    // Pinta una tarjeta de paso del agente (edición / ejecución), estilo Claude Code
-    const renderAgentStep = (kind: 'edit' | 'run', title: string) => {
-      const step = document.createElement('div')
-      step.className = `agent-step ${kind}`
+    // Si el modelo aún no está listo, lo cargamos mostrando el progreso en el estado
+    // ("Preparing model…" / "Downloading model… X%") en vez de una pantalla de carga.
+    if (!chatbot.getState().isReady) {
+      showStatus('Preparing model…')
+      modelLoadStatusUpdater = showStatus
+      const ready = await ensureModelLoadedForChoice()
+      modelLoadStatusUpdater = null
+      if (!ready) {
+        clearStatus()
+        addChatMessage(
+          'assistant',
+          'I could not load an AI model. Check your connection or pick another model in the selector.',
+        )
+        updateChatEmptyState()
+        agentBusy = false
+        chatbotInput.readOnly = false
+        chatbotSend.disabled = false
+        focusChatbotInput()
+        return
+      }
+    }
 
-      const icon = document.createElement('span')
-      icon.className = 'agent-step-icon'
-      icon.textContent = kind === 'edit' ? '✎' : '▶'
+    // Grupo de trabajo del agente ("Worked for Xs", plegable). Se crea al primer paso.
+    const runStart = performance.now()
+    let runGroup: HTMLElement | null = null
+    let runStepsEl: HTMLElement | null = null
+    let runHeaderLabel: HTMLElement | null = null
 
-      const titleEl = document.createElement('span')
-      titleEl.className = 'agent-step-title'
-      titleEl.textContent = title
+    const ensureRunGroup = () => {
+      if (runGroup) return
+      runGroup = document.createElement('div')
+      runGroup.className = 'agent-run'
 
-      const detailEl = document.createElement('span')
-      detailEl.className = 'agent-step-detail'
+      const header = document.createElement('button')
+      header.type = 'button'
+      header.className = 'agent-run-header'
 
-      step.appendChild(icon)
-      step.appendChild(titleEl)
-      step.appendChild(detailEl)
-      chatbotMessages?.appendChild(step)
+      runHeaderLabel = document.createElement('span')
+      runHeaderLabel.textContent = 'Working…'
+      header.appendChild(runHeaderLabel)
+
+      const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      chevron.setAttribute('class', 'agent-run-chevron')
+      chevron.setAttribute('width', '12')
+      chevron.setAttribute('height', '12')
+      chevron.setAttribute('viewBox', '0 0 24 24')
+      chevron.setAttribute('fill', 'none')
+      chevron.setAttribute('stroke', 'currentColor')
+      chevron.setAttribute('stroke-width', '2')
+      chevron.setAttribute('stroke-linecap', 'round')
+      chevron.setAttribute('stroke-linejoin', 'round')
+      chevron.innerHTML = '<path d="M6 9l6 6l6 -6" />'
+      header.appendChild(chevron)
+
+      runStepsEl = document.createElement('div')
+      runStepsEl.className = 'agent-run-steps'
+
+      header.addEventListener('click', () => runGroup?.classList.toggle('collapsed'))
+      runGroup.appendChild(header)
+      runGroup.appendChild(runStepsEl)
+      chatbotMessages?.appendChild(runGroup)
+    }
+
+    let runFinalized = false
+    const finalizeRunGroup = () => {
+      if (runFinalized || !runGroup || !runHeaderLabel) return
+      runFinalized = true
+      const seconds = Math.max(1, Math.round((performance.now() - runStart) / 1000))
+      runHeaderLabel.textContent = `Worked for ${seconds}s`
+      runGroup.classList.add('collapsed')
+    }
+
+    // Tarjeta de EDICIÓN con diff aplicado (+X −Y, expandible para ver el diff).
+    const renderAgentEdit = (info: AgentEditInfo) => {
+      ensureRunGroup()
+
+      const card = document.createElement('div')
+      card.className = 'agent-card edit collapsed'
+
+      const head = document.createElement('button')
+      head.type = 'button'
+      head.className = 'agent-card-head'
+      head.innerHTML = `
+        <svg class="agent-card-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4"/><path d="M13.5 6.5l4 4"/></svg>
+        <span class="agent-card-title">${escapeHtml(info.note || 'Edited the code')}</span>
+        <span class="agent-card-stats"><span class="diff-add">+${info.added}</span><span class="diff-del">−${info.removed}</span></span>
+        <svg class="agent-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 9l6 6l6 -6"/></svg>`
+
+      const changed = info.lines.filter((line) => line.type !== 'ctx')
+      const shown = changed.slice(0, 80)
+      const diffEl = document.createElement('div')
+      diffEl.className = 'agent-card-diff'
+      diffEl.innerHTML =
+        shown
+          .map((line) => {
+            const cls = line.type === 'add' ? 'add' : 'del'
+            const num = line.type === 'add' ? line.newLine : line.oldLine
+            const sign = line.type === 'add' ? '+' : '−'
+            return `<div class="diff-row ${cls}"><span class="diff-num">${num ?? ''}</span><span class="diff-sign">${sign}</span><span class="diff-code">${escapeHtml(line.text) || ' '}</span></div>`
+          })
+          .join('') +
+        (changed.length > shown.length ? `<div class="diff-more">… ${changed.length - shown.length} more lines</div>` : '')
+
+      head.addEventListener('click', () => card.classList.toggle('collapsed'))
+      card.appendChild(head)
+      card.appendChild(diffEl)
+      runStepsEl?.appendChild(card)
+      chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
+    }
+
+    // Tarjeta de EJECUCIÓN (estado ok/error).
+    const renderAgentRun = () => {
+      ensureRunGroup()
+
+      const card = document.createElement('div')
+      card.className = 'agent-card run'
+      card.innerHTML = `
+        <svg class="agent-card-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4v16l13 -8z"/></svg>
+        <span class="agent-card-title">Ran the code</span>
+        <span class="agent-card-detail"></span>`
+      const detailEl = card.querySelector('.agent-card-detail') as HTMLElement
+      runStepsEl?.appendChild(card)
       chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
 
       return {
         update(detail: string, state?: 'ok' | 'error') {
           detailEl.textContent = detail
-          if (state) step.classList.add(state)
+          if (state) card.classList.add(state)
           chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
         },
       }
@@ -2525,16 +2801,42 @@ async function initChatbot() {
 
     // Pinta la respuesta final del asistente como markdown (reutiliza ChatResponse)
     const renderAssistantMarkdown = (markdown: string) => {
+      finalizeRunGroup()
+
       const assistantMessageDiv = document.createElement('div')
       assistantMessageDiv.className = 'chatbot-message assistant'
 
-      const roleSpan = document.createElement('div')
-      roleSpan.className = 'chatbot-message-role'
-      roleSpan.textContent = 'AI Assistant'
-      assistantMessageDiv.appendChild(roleSpan)
-
       const contentDiv = document.createElement('div')
+      contentDiv.className = 'chatbot-message-content'
       assistantMessageDiv.appendChild(contentDiv)
+
+      const meta = document.createElement('div')
+      meta.className = 'chatbot-message-meta'
+      const time = document.createElement('span')
+      time.textContent = 'Just now'
+      const copyIconSvg =
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M8 8m0 2a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2z"/><path d="M16 8v-2a2 2 0 0 0 -2 -2h-8a2 2 0 0 0 -2 2v8a2 2 0 0 0 2 2h2"/></svg>'
+      const checkIconSvg =
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 12l5 5l10 -10"/></svg>'
+      const copyBtn = document.createElement('button')
+      copyBtn.type = 'button'
+      copyBtn.title = 'Copy response'
+      copyBtn.innerHTML = copyIconSvg
+      let copyResetTimer: number | undefined
+      copyBtn.addEventListener('click', () => {
+        void navigator.clipboard?.writeText(markdown)
+        copyBtn.innerHTML = checkIconSvg
+        copyBtn.classList.add('copied')
+        window.clearTimeout(copyResetTimer)
+        copyResetTimer = window.setTimeout(() => {
+          copyBtn.innerHTML = copyIconSvg
+          copyBtn.classList.remove('copied')
+        }, 1800)
+      })
+      meta.appendChild(time)
+      meta.appendChild(copyBtn)
+      assistantMessageDiv.appendChild(meta)
+
       chatbotMessages?.appendChild(assistantMessageDiv)
 
       const reactRoot = createRoot(contentDiv)
@@ -2549,6 +2851,7 @@ async function initChatbot() {
           lineHeight: calculateLineHeight(currentSettings.fontSize),
         }),
       )
+      updateChatEmptyState()
       chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
     }
 
@@ -2561,15 +2864,18 @@ async function initChatbot() {
       run: () => runCodeAndCollect(),
     }
 
+    const fullMessage = selectionContext ? `${selectionContext}\n\n${message}` : message
+
     try {
-      await runAgent(message, {
+      await runAgent(fullMessage, {
         generate: (messages, onChunk) => chatbot.generate(messages, onChunk),
         bridge,
         maxSteps: 6,
         ui: {
           status: showStatus,
           clearStatus,
-          step: renderAgentStep,
+          edit: renderAgentEdit,
+          run: renderAgentRun,
           finalAnswer: renderAssistantMarkdown,
         },
       })
@@ -2578,7 +2884,10 @@ async function initChatbot() {
       clearStatus()
       addChatMessage('assistant', `Error: ${error?.message ?? String(error)}`)
     } finally {
+      agentBusy = false
       clearStatus()
+      finalizeRunGroup()
+      updateChatEmptyState()
       chatbotInput.disabled = false
       chatbotInput.readOnly = false
       chatbotSend.disabled = false

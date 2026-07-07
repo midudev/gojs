@@ -13,7 +13,7 @@ import type { ChatMessage } from '../chatbot'
 export interface AgentRunResult {
   /** Salida de consola formateada (una línea por entrada). */
   output: string
-  /** true si la última ejecución produjo errores. */
+  /** true SOLO si hubo un error de ejecución no capturado (no cuenta console.error). */
   hasError: boolean
 }
 
@@ -26,14 +26,38 @@ export interface AgentBridge {
   language?(): string
 }
 
+export interface DiffLine {
+  type: 'add' | 'del' | 'ctx'
+  text: string
+  /** Número de línea en el archivo antiguo (para 'del' y 'ctx'). */
+  oldLine?: number
+  /** Número de línea en el archivo nuevo (para 'add' y 'ctx'). */
+  newLine?: number
+}
+
+export interface CodeDiff {
+  added: number
+  removed: number
+  lines: DiffLine[]
+}
+
+export interface AgentEditInfo {
+  added: number
+  removed: number
+  note?: string
+  lines: DiffLine[]
+}
+
 export interface AgentStepHandle {
   update(detail: string, state?: 'ok' | 'error'): void
 }
 
 /** Callbacks de UI. Los implementa main.ts para pintar pasos y la respuesta final. */
 export interface AgentUI {
-  /** Pinta una tarjeta de paso (edición/ejecución) y devuelve un updater. */
-  step(kind: 'edit' | 'run', title: string): AgentStepHandle
+  /** Pinta una tarjeta de edición con el diff aplicado (+añadidas / −borradas). */
+  edit(info: AgentEditInfo): void
+  /** Pinta una tarjeta de ejecución y devuelve un updater. */
+  run(): AgentStepHandle
   /** Pinta la respuesta final del asistente (markdown). */
   finalAnswer(markdown: string): void
   /** Actualiza el indicador de estado ("Pensando…", "Trabajando…"). */
@@ -58,31 +82,73 @@ interface ParsedAction {
 }
 
 // ---------------------------------------------------------------------------
-// Protocolo
+// Diff por líneas (LCS). Sirve para mostrar "+X −Y" y el diff coloreado.
 // ---------------------------------------------------------------------------
-//
-// El modelo responde con UNA acción por turno. Usamos etiquetas + bloques de
-// código (en vez de JSON con el código escapado, que los modelos pequeños rompen):
-//
-//   <action>write</action>       -> reescribe TODO el código (fenced block después)
-//   <action>run</action>         -> ejecuta el código actual y observa la salida
-//   <action>final</action>       -> termina; el texto es la respuesta al usuario
-//
-// Si no hay etiqueta <action>, se trata como respuesta final (chat normal). Así el
-// modo es transparente: una pregunta simple se responde sin tocar el código.
+export function computeLineDiff(oldCode: string, newCode: string): CodeDiff {
+  const a = oldCode.length ? oldCode.split('\n') : []
+  const b = newCode.length ? newCode.split('\n') : []
+  const m = a.length
+  const n = b.length
 
+  // Tabla LCS (longitud de subsecuencia común) desde el final.
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0))
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+
+  const lines: DiffLine[] = []
+  let added = 0
+  let removed = 0
+  let i = 0
+  let j = 0
+  let oldNo = 1
+  let newNo = 1
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      lines.push({ type: 'ctx', text: a[i], oldLine: oldNo++, newLine: newNo++ })
+      i++
+      j++
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      lines.push({ type: 'del', text: a[i], oldLine: oldNo++ })
+      i++
+      removed++
+    } else {
+      lines.push({ type: 'add', text: b[j], newLine: newNo++ })
+      j++
+      added++
+    }
+  }
+  while (i < m) {
+    lines.push({ type: 'del', text: a[i], oldLine: oldNo++ })
+    i++
+    removed++
+  }
+  while (j < n) {
+    lines.push({ type: 'add', text: b[j], newLine: newNo++ })
+    j++
+    added++
+  }
+
+  return { added, removed, lines }
+}
+
+// ---------------------------------------------------------------------------
+// Protocolo (etiquetas + bloques de código; más fiable que JSON en modelos pequeños)
+// ---------------------------------------------------------------------------
 function buildSystemPrompt(language: string): string {
   return `You are a coding AGENT embedded in a live ${language} playground. You can talk to the user AND directly control the code in the editor.
 
-You work in a loop. On EACH turn you output EXACTLY ONE action, using this format:
+You work in a loop. On EACH turn you output EXACTLY ONE action:
 
 1) To CHANGE the code (fix a bug, add a feature, inject, delete or modify anything), rewrite the WHOLE file:
 <action>write</action>
 \`\`\`${language}
-<the complete, updated code — not a diff, the full file>
+<the complete, updated code>
 \`\`\`
 
-2) To EXECUTE the current code and see the console output / errors:
+2) To EXECUTE the current code and read the console output / errors:
 <action>run</action>
 
 3) To FINISH and reply to the user (also for pure questions/explanations that need no code change):
@@ -90,12 +156,13 @@ You work in a loop. On EACH turn you output EXACTLY ONE action, using this forma
 <your message to the user, in Markdown>
 
 Rules:
-- Decide from the user's request whether to just answer or to act. If they ask a question ("why does this fail?", "explain X"), use <action>final</action> with the explanation. If they ask you to fix/change/build something, use <action>write</action> then <action>run</action> to verify.
-- After a "run", read the console output. If there are errors or the result is wrong, issue another <action>write</action> with the corrected full code, then run again. Iterate until it works.
-- With "write" you ALWAYS output the entire file, never a fragment or a diff.
-- Keep going autonomously; do not ask the user for confirmation mid-task. Only stop with <action>final</action>.
-- Match the user's language in your final message.
-- Do not wrap the action tag in extra prose. Optionally add a short one-line note between the tag and the code block.`
+- Decide from the request whether to answer or to act. Questions -> <action>final</action>. Fix/change requests -> <action>write</action> then <action>run</action>.
+- IMPORTANT: console.log / console.warn / console.error are normal program OUTPUT, NOT errors. Only treat the run as failed if the output explicitly says the execution threw an uncaught error.
+- After a run that succeeded (no uncaught error), reply with <action>final</action>. Do NOT keep rewriting working code.
+- If you cannot fix a real error after one attempt, stop with <action>final</action> and explain it. Never loop.
+- With "write" always output the entire file, never a diff.
+- Keep going autonomously; do not ask for confirmation mid-task.
+- Match the user's language in your final message.`
 }
 
 function buildUserPrompt(userMessage: string, code: string, language: string): string {
@@ -103,12 +170,10 @@ function buildUserPrompt(userMessage: string, code: string, language: string): s
   return `The code currently in the editor is:\n${codeBlock}\n\nUser request: ${userMessage}`
 }
 
-/** Elimina los bloques de razonamiento <think>…</think> que emiten algunos modelos. */
 function stripThink(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
 }
 
-/** Extrae el primer bloque de código fenced (```lang\n…```). */
 function extractFirstCodeBlock(text: string): string | null {
   const match = text.match(/```[a-zA-Z0-9]*\r?\n?([\s\S]*?)```/)
   if (!match) return null
@@ -119,7 +184,6 @@ export function parseAction(raw: string): ParsedAction {
   const text = stripThink(raw)
   const tagMatch = text.match(/<action>\s*(write|run|final)\s*<\/action>/i)
 
-  // Sin etiqueta de acción -> es una respuesta de chat normal (modo transparente).
   if (!tagMatch) {
     return { kind: 'final', text: text }
   }
@@ -129,7 +193,6 @@ export function parseAction(raw: string): ParsedAction {
 
   if (kind === 'write') {
     const code = extractFirstCodeBlock(after) ?? extractFirstCodeBlock(text) ?? ''
-    // Nota opcional: texto entre la etiqueta y el bloque de código.
     const note = after.split('```')[0].trim()
     return { kind: 'write', code, note: note || undefined }
   }
@@ -138,20 +201,18 @@ export function parseAction(raw: string): ParsedAction {
     return { kind: 'run' }
   }
 
-  // final: el texto tras la etiqueta (o todo si no hay nada después).
   return { kind: 'final', text: after || text }
 }
 
-/** Resumen corto de la salida de consola para la tarjeta del paso. */
 function summarizeOutput(result: AgentRunResult): string {
-  if (result.hasError) return 'finished with errors'
+  if (result.hasError) return 'execution error'
   const lines = result.output.split('\n').filter((l) => l.trim()).length
-  return lines > 0 ? `${lines} line${lines === 1 ? '' : 's'} of output` : 'ran with no output'
+  return lines > 0 ? `${lines} line${lines === 1 ? '' : 's'} of output` : 'no errors'
 }
 
 export async function runAgent(userMessage: string, deps: AgentDeps): Promise<void> {
   const { generate, bridge, ui } = deps
-  const maxSteps = deps.maxSteps ?? 6
+  const maxSteps = deps.maxSteps ?? 8
   const language = bridge.language?.() ?? 'javascript'
 
   const messages: ChatMessage[] = [
@@ -160,9 +221,11 @@ export async function runAgent(userMessage: string, deps: AgentDeps): Promise<vo
   ]
 
   let didEdit = false
+  let noChangeWrites = 0
+  let previousErrorOutput: string | null = null
 
   for (let stepIndex = 0; stepIndex < maxSteps; stepIndex++) {
-    ui.status(stepIndex === 0 ? 'Thinking…' : 'Working…')
+    ui.status(stepIndex === 0 ? 'Planning next moves…' : didEdit ? 'Reviewing the result…' : 'Thinking…')
 
     let raw = ''
     try {
@@ -173,19 +236,18 @@ export async function runAgent(userMessage: string, deps: AgentDeps): Promise<vo
       return
     }
 
-    ui.clearStatus()
-
     const action = parseAction(raw)
     messages.push({ role: 'assistant', content: raw })
 
     if (action.kind === 'final') {
+      ui.clearStatus()
       ui.finalAnswer(action.text?.trim() || '(done)')
       return
     }
 
     if (action.kind === 'write') {
-      const code = action.code ?? ''
-      if (!code.trim()) {
+      const newCode = action.code ?? ''
+      if (!newCode.trim()) {
         messages.push({
           role: 'user',
           content:
@@ -194,20 +256,39 @@ export async function runAgent(userMessage: string, deps: AgentDeps): Promise<vo
         continue
       }
 
-      bridge.setCode(code)
+      const oldCode = bridge.getCode()
+      const diff = computeLineDiff(oldCode, newCode)
+
+      // Sin cambios reales: evita quedarse en bucle reescribiendo lo mismo.
+      if (diff.added === 0 && diff.removed === 0) {
+        noChangeWrites++
+        if (noChangeWrites >= 2) {
+          ui.finalAnswer('The code is already as it should be; there are no more changes to apply.')
+          return
+        }
+        messages.push({
+          role: 'user',
+          content: 'That produced no changes (identical code). If the task is done, reply with <action>final</action>.',
+        })
+        continue
+      }
+
+      noChangeWrites = 0
+      ui.status('Editing the code…')
+      bridge.setCode(newCode)
       didEdit = true
-      const handle = ui.step('edit', action.note || 'Updated the code')
-      handle.update(`${code.split('\n').length} lines`, 'ok')
+      ui.edit({ added: diff.added, removed: diff.removed, note: action.note, lines: diff.lines })
 
       messages.push({
         role: 'user',
-        content: `Applied. The editor now contains exactly:\n\`\`\`${language}\n${code}\n\`\`\`\nRun it with <action>run</action> to verify, or finish with <action>final</action>.`,
+        content: `Applied (+${diff.added} -${diff.removed}). The editor now contains exactly:\n\`\`\`${language}\n${newCode}\n\`\`\`\nRun it with <action>run</action> to verify, or finish with <action>final</action>.`,
       })
       continue
     }
 
     if (action.kind === 'run') {
-      const handle = ui.step('run', 'Running the code')
+      ui.status('Running the code…')
+      const handle = ui.run()
       let result: AgentRunResult
       try {
         result = await bridge.run()
@@ -216,23 +297,33 @@ export async function runAgent(userMessage: string, deps: AgentDeps): Promise<vo
       }
       handle.update(summarizeOutput(result), result.hasError ? 'error' : 'ok')
 
-      const observation = result.output.trim() || '(no console output)'
+      const observation = result.output.trim() || '(sin salida en consola)'
+
+      // Si el mismo error se repite, no seguimos intentando (anti-bucle).
+      if (result.hasError && previousErrorOutput !== null && observation === previousErrorOutput) {
+        ui.finalAnswer(
+          `I could not fix the error automatically:\n\n\`\`\`\n${observation.slice(0, 500)}\n\`\`\`\n\nTake a look or give me more details.`,
+        )
+        return
+      }
+      previousErrorOutput = result.hasError ? observation : null
+
       messages.push({
         role: 'user',
         content: `Console output after running:\n\`\`\`\n${observation}\n\`\`\`\n${
           result.hasError
-            ? 'There are errors. Fix them with another <action>write</action> (full file), then run again.'
-            : 'If this is correct, reply with <action>final</action> summarizing what you did. Otherwise keep improving.'
+            ? 'There is an UNCAUGHT execution error. Fix it with another <action>write</action> (full file), then run again. If you cannot, reply <action>final</action> explaining why.'
+            : 'The code ran without uncaught errors. Reply with <action>final</action> summarizing what you did.'
         }`,
       })
       continue
     }
   }
 
-  // Se alcanzó el límite de pasos.
+  ui.clearStatus()
   ui.finalAnswer(
     didEdit
-      ? '_He alcanzado el límite de pasos. Revisa el código actual y dime si quieres que siga._'
-      : '_He alcanzado el límite de pasos sin completar la tarea. ¿Puedes darme más detalles?_',
+      ? '_I reached the step limit. Check the current code and tell me if you want me to continue._'
+      : '_I could not complete the task. Can you give me more details?_',
   )
 }

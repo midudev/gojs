@@ -1785,9 +1785,10 @@ body {
 
 .chatbot-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
-  padding: 12px 16px;
+  padding: 8px 12px 0;
+  min-height: 0;
 }
 
 .chatbot-title {
@@ -1896,16 +1897,108 @@ body {
   white-space: pre-wrap;
 }
 
+/* Mensaje del usuario: caja con borde a todo el ancho (estilo Cursor) */
 .chatbot-message.user .chatbot-message-content {
-  background-color: var(--surface-active-background);
-  align-self: flex-end;
-  max-width: 80%;
-  border-radius: 5000px;
-  border: 1px solid var(--surface-border);
-  padding: 8px 14px;
+  background-color: color-mix(in srgb, var(--surface-active-background) 55%, transparent);
+  border: 1px solid var(--surface-border-strong);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--color-text-primary);
 }
 
 .chatbot-message.assistant .chatbot-message-content {
+  font-size: 14px;
+}
+
+/* En la conversación no mostramos etiqueta de rol (look limpio tipo Cursor). */
+.chatbot-message > .chatbot-message-role {
+  display: none;
+}
+
+/* Estado vacío: el composer se coloca arriba del todo; con mensajes, abajo. */
+.chatbot-panel.is-empty .chatbot-messages {
+  order: 2;
+  flex: 1;
+}
+
+.chatbot-panel.is-empty .chatbot-composer {
+  order: 1;
+}
+
+/* Grupo de trabajo del agente ("Worked for Xs" plegable, estilo Cursor) */
+.agent-run {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-run-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
+
+.agent-run-header:hover {
+  color: var(--color-text-primary);
+}
+
+.agent-run-chevron {
+  transition: transform 0.15s ease;
+  opacity: 0.7;
+}
+
+.agent-run.collapsed .agent-run-chevron {
+  transform: rotate(-90deg);
+}
+
+.agent-run.collapsed .agent-run-steps {
+  display: none;
+}
+
+.agent-run-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Metadatos bajo la respuesta del asistente (timestamp + copiar) */
+.chatbot-message-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
+}
+
+.chatbot-message-meta button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.chatbot-message-meta button:hover {
+  color: var(--color-text-primary);
+  background-color: var(--surface-hover-background);
+}
+
+.chatbot-message-meta button.copied {
+  color: #3fb950;
 }
 
 .ai-inline-code {
@@ -2275,29 +2368,126 @@ body {
   line-height: 1.3;
 }
 
-.chatbot-input-container {
+/* Composer estilo Cursor: caja redondeada con textarea + barra inferior */
+.chatbot-composer {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  padding: 12px 16px;
+  margin: 12px 16px;
+  padding: 12px 12px 10px;
+  background-color: var(--surface-field-background);
+  border: 1px solid var(--surface-border-strong);
+  border-radius: 16px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.chatbot-composer:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--surface-border-strong));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+/* Chip de contexto (selección del editor) dentro del composer */
+.chatbot-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chatbot-context[hidden] {
+  display: none;
+}
+
+.chatbot-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 3px 6px 3px 7px;
+  background-color: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--color-accent);
+}
+
+.chatbot-context-chip svg {
+  flex-shrink: 0;
+}
+
+.chatbot-context-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatbot-context-range {
+  opacity: 0.8;
+}
+
+.chatbot-context-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.7;
+}
+
+.chatbot-context-remove:hover {
+  opacity: 1;
+}
+
+/* Línea de estado dinámica del agente ("Planning next moves…", "Editing…", …).
+   Texto pequeño con un brillo (shimmer) que barre de izquierda a derecha. */
+.agent-status {
+  padding: 2px 2px;
+  font-size: 11.5px;
+  font-weight: 500;
+  width: fit-content;
+  max-width: 100%;
+  background: linear-gradient(
+    100deg,
+    var(--color-text-secondary) 30%,
+    var(--color-text-primary) 50%,
+    var(--color-text-secondary) 70%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: agent-status-shimmer 1.6s linear infinite;
+}
+
+@keyframes agent-status-shimmer {
+  0% {
+    background-position: 180% 0;
+  }
+  100% {
+    background-position: -80% 0;
+  }
 }
 
 .chatbot-input {
-  flex: 1;
-  background-color: var(--surface-field-background);
-  border: 1px solid var(--surface-border-strong);
+  width: 100%;
+  background: transparent;
+  border: none;
   color: var(--color-text-primary);
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 13px;
+  padding: 2px 4px;
+  font-size: 14px;
+  line-height: 1.5;
   font-family: var(--font-sans);
   resize: none;
-  max-height: 120px;
+  min-height: 24px;
+  max-height: 200px;
   overflow-y: auto;
-  transition: all 0.2s ease;
 
   &:focus {
     outline: none;
-    border-color: var(--color-accent);
   }
 
   &:disabled {
@@ -2305,12 +2495,12 @@ body {
     cursor: not-allowed;
   }
 
-  &::-webkit-scrollbar {
-    width: 6px;
+  &::placeholder {
+    color: var(--color-text-secondary);
   }
 
-  &::-webkit-scrollbar-track {
-    background: var(--surface-scrollbar-track);
+  &::-webkit-scrollbar {
+    width: 6px;
   }
 
   &::-webkit-scrollbar-thumb {
@@ -2319,48 +2509,153 @@ body {
   }
 }
 
+.chatbot-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chatbot-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Selector de modelo (abajo a la izquierda del composer) */
+.chatbot-model-selector {
+  position: relative;
+}
+
+.chatbot-model-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.chatbot-model-trigger:hover {
+  background-color: var(--surface-hover-background);
+  color: var(--color-text-primary);
+}
+
+.chatbot-model-chevron {
+  opacity: 0.7;
+}
+
+.chatbot-model-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--surface-border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--surface-soft-shadow);
+  z-index: 20;
+}
+
+.chatbot-model-menu[hidden] {
+  display: none;
+}
+
+/* Con el composer arriba (estado vacío) el menú se abre hacia abajo para no cortarse */
+.chatbot-panel.is-empty .chatbot-model-menu {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
+.chatbot-model-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+.chatbot-model-option:hover {
+  background-color: var(--surface-hover-background);
+}
+
+.chatbot-model-option-name {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chatbot-model-option-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.chatbot-model-option.selected .chatbot-model-option-name::after {
+  content: '✓';
+  color: var(--color-accent);
+  margin-left: auto;
+}
+
+/* Botón de enviar circular con el icono de flecha */
 .chatbot-send-btn {
   background: var(--color-accent);
   border: none;
   color: var(--surface-accent-foreground);
   cursor: pointer;
-  padding: 10px 12px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  transition: all 0.2s ease;
+  border-radius: 50%;
+  transition:
+    background-color 0.2s ease,
+    transform 0.1s ease,
+    opacity 0.2s ease;
   flex-shrink: 0;
 }
 
 .chatbot-send-btn:hover:not(:disabled) {
   background: var(--color-accent-hover);
-  opacity: 0.9;
-  transform: scale(1.05);
+  transform: scale(1.06);
 }
 
 .chatbot-send-btn:active:not(:disabled) {
-  transform: scale(0.95);
+  transform: scale(0.94);
 }
 
 .chatbot-send-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
-/* Tarjetas de pasos del agente de código (edición / ejecución) */
-.agent-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 0;
-  padding: 8px 12px;
-  font-size: 12.5px;
-  color: var(--color-text-primary);
-  background-color: var(--color-bg-secondary);
+/* Tarjetas del agente (edición con diff / ejecución) */
+.agent-card {
+  background-color: color-mix(in srgb, var(--color-bg-secondary) 60%, transparent);
   border: 1px solid var(--surface-border);
-  border-left: 3px solid var(--color-accent);
-  border-radius: 8px;
+  border-radius: 9px;
+  overflow: hidden;
   animation: agent-step-in 160ms ease;
 }
 
@@ -2375,33 +2670,150 @@ body {
   }
 }
 
-.agent-step.run {
-  border-left-color: color-mix(in srgb, var(--color-accent) 70%, #22c55e);
+/* Cabecera común (edición: es un botón clicable para desplegar el diff) */
+.agent-card-head,
+.agent-card.run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  font-size: 12.5px;
+  font-family: var(--font-sans);
+  color: var(--color-text-primary);
+  background: transparent;
+  border: none;
+  text-align: left;
 }
 
-.agent-step.ok {
-  border-left-color: #22c55e;
+.agent-card-head {
+  cursor: pointer;
 }
 
-.agent-step.error {
-  border-left-color: #ef4444;
-}
-
-.agent-step-icon {
+.agent-card-icon {
   flex-shrink: 0;
-  font-size: 12px;
-  opacity: 0.9;
+  color: var(--color-text-secondary);
 }
 
-.agent-step-title {
+.agent-card-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-card-stats {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
 
-.agent-step-detail {
+.diff-add {
+  color: #3fb950;
+}
+
+.diff-del {
+  color: #f85149;
+}
+
+.agent-card-chevron {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  transition: transform 0.15s ease;
+}
+
+.agent-card.collapsed .agent-card-chevron {
+  transform: rotate(-90deg);
+}
+
+.agent-card.collapsed .agent-card-diff {
+  display: none;
+}
+
+/* Diff coloreado con números de línea dentro de la tarjeta de edición */
+.agent-card-diff {
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px 0;
+  border-top: 1px solid var(--surface-border);
+  background-color: color-mix(in srgb, var(--color-bg-primary) 55%, transparent);
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.diff-row {
+  display: flex;
+  align-items: flex-start;
+  padding-right: 12px;
+  white-space: pre;
+}
+
+.diff-row.add {
+  background-color: color-mix(in srgb, #3fb950 13%, transparent);
+}
+
+.diff-row.del {
+  background-color: color-mix(in srgb, #f85149 13%, transparent);
+}
+
+.diff-num {
+  flex: 0 0 auto;
+  width: 32px;
+  padding-right: 12px;
+  text-align: right;
+  color: var(--color-text-secondary);
+  opacity: 0.5;
+  user-select: none;
+}
+
+.diff-sign {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  user-select: none;
+}
+
+.diff-row.add .diff-sign,
+.diff-row.add .diff-code {
+  color: #3fb950;
+}
+
+.diff-row.del .diff-sign,
+.diff-row.del .diff-code {
+  color: #f85149;
+}
+
+.diff-code {
+  white-space: pre;
+}
+
+.diff-more {
+  padding: 4px 12px;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* Tarjeta de ejecución */
+.agent-card.run .agent-card-detail {
   margin-left: auto;
   font-size: 11.5px;
   color: var(--color-text-secondary);
-  font-variant-numeric: tabular-nums;
+}
+
+.agent-card.run.ok .agent-card-icon {
+  color: #3fb950;
+}
+
+.agent-card.run.error {
+  border-color: color-mix(in srgb, #f85149 45%, var(--surface-border));
+}
+
+.agent-card.run.error .agent-card-icon,
+.agent-card.run.error .agent-card-detail {
+  color: #f85149;
 }
 
 .chatbot-typing-indicator {
