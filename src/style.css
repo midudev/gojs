@@ -1729,7 +1729,7 @@ body {
 .tooltip[popover='hint'] {
   margin: 0;
   inset: auto;
-  position: absolute;
+  position: fixed;
   z-index: 1001;
   padding: 6px 8px;
   border-radius: 6px;
@@ -1740,9 +1740,10 @@ body {
   background-color: var(--color-bg-secondary);
   border: 1px solid var(--surface-border-strong);
   box-shadow: 0 4px 12px var(--surface-soft-shadow);
-  /* Default placement under anchor */
-  top: calc(anchor(bottom) + 6px);
-  left: anchor(center);
+  /* La posición (top/left) la calcula JS en popovers.ts para funcionar en todos
+     los navegadores. CSS Anchor Positioning no está soportado en Firefox/Zen. */
+  top: 0;
+  left: 0;
   translate: -50% 0;
 }
 

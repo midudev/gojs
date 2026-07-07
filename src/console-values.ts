@@ -1,5 +1,5 @@
 export type SerializedConsoleValue =
-  | { __type: 'Promise' | 'Function' | 'Object' | 'Unknown' | 'Circular'; __value: string }
+  | { __type: 'Promise' | 'Function' | 'Symbol' | 'Object' | 'Unknown' | 'Circular'; __value: string }
   | { __type: 'Set'; __values: any[] }
   | { __type: 'Map'; __entries: [any, any][] }
 
@@ -11,6 +11,7 @@ export function isSerializedConsoleValue(value: any): value is SerializedConsole
   switch (value.__type) {
     case 'Promise':
     case 'Function':
+    case 'Symbol':
     case 'Object':
     case 'Unknown':
     case 'Circular':
@@ -36,6 +37,12 @@ export function serializeConsoleValue(value: any, seen = new WeakSet<object>()):
 
   if (typeof value === 'function') {
     return { __type: 'Function', __value: value.toString() }
+  }
+
+  // Los symbols no son clonables por structuredClone/postMessage, así que
+  // los serializamos a su representación textual (p. ej. "Symbol(foo)").
+  if (typeof value === 'symbol') {
+    return { __type: 'Symbol', __value: value.toString() }
   }
 
   if (value === null || value === undefined) {

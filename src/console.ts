@@ -10,7 +10,9 @@ interface InjectExpressionLoggingOptions {
   enabled?: boolean
 }
 
-// Mapa de líneas: línea en código modificado -> línea en código original
+// Mapa de líneas: línea en el código que se pasa a AsyncFunction -> línea en el código original.
+// El desfase que añade el propio wrapper de AsyncFunction se calcula aparte en el worker
+// (varía entre motores), así que aquí el mapa es 1:1 salvo por las inyecciones de expresiones.
 export const lineMap = new Map<number, number>()
 
 function mapOriginalCodeLines(code: string) {
@@ -18,8 +20,119 @@ function mapOriginalCodeLines(code: string) {
 
   const originalLines = code.split('\n').length
   for (let i = 1; i <= originalLines; i++) {
-    lineMap.set(i + 1, i) // +1 por el wrapper de AsyncFunction
+    lineMap.set(i, i) // mapeo 1:1 (sin inyecciones)
   }
+}
+
+// CDN usado para resolver imports de paquetes npm (bare specifiers) a módulos ESM.
+const ESM_CDN_BASE = 'https://esm.sh/'
+
+/**
+ * Resuelve el specifier de un import a algo que `import()` pueda cargar en el navegador.
+ *
+ * - URLs absolutas (`https:`, `data:`, `blob:`, `node:`…), protocolo-relativas (`//`),
+ *   rutas absolutas (`/`) y relativas (`./`, `../`) se dejan intactas.
+ * - Los "bare specifiers" (paquetes npm: `lodash`, `lodash/fp`, `@scope/pkg`,
+ *   `zod@3`…) se mapean al CDN ESM para que el import funcione dentro del worker,
+ *   que no dispone de resolución de módulos de node.
+ */
+export function resolveModuleSpecifier(specifier: string): string {
+  const value = specifier.trim()
+
+  if (
+    value === '' ||
+    /^[a-z][a-z0-9+.-]*:/i.test(value) || // esquema: https:, data:, blob:, node:, file:…
+    value.startsWith('//') || // protocolo-relativo
+    value.startsWith('/') || // ruta absoluta
+    value.startsWith('./') ||
+    value.startsWith('../')
+  ) {
+    return value
+  }
+
+  // Bare specifier -> paquete npm servido como ESM desde el CDN.
+  return `${ESM_CDN_BASE}${value}`
+}
+
+/**
+ * Reescribe las declaraciones `import` estáticas a `import()` dinámicos para que el
+ * código pueda ejecutarse dentro de una AsyncFunction (que no admite import estático).
+ * Permite importar módulos ESM desde CDNs como esm.sh, skypack, jsdelivr, etc.
+ *
+ * Preserva el número de líneas del original (rellenando con saltos de línea) para no
+ * romper el mapeo de líneas de la consola.
+ */
+export function transformImports(code: string): string {
+  let ast: any
+  try {
+    ast = acorn.parse(code, {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      locations: true,
+    })
+  } catch {
+    // Código con errores de sintaxis (probablemente en edición): lo dejamos tal cual
+    return code
+  }
+
+  const imports = (ast.body as any[]).filter((node) => node.type === 'ImportDeclaration')
+
+  if (imports.length === 0) {
+    return code
+  }
+
+  // Reemplazar de atrás hacia adelante para no invalidar los offsets
+  imports.sort((a, b) => b.start - a.start)
+
+  let result = code
+
+  for (let i = 0; i < imports.length; i++) {
+    const node = imports[i]
+    const original = code.substring(node.start, node.end)
+    // Conservar el mismo número de saltos de línea que ocupaba el import original
+    const newlineCount = (original.match(/\n/g) || []).length
+    const replacement = buildDynamicImport(node, imports.length - i) + '\n'.repeat(newlineCount)
+
+    result = result.substring(0, node.start) + replacement + result.substring(node.end)
+  }
+
+  return result
+}
+
+function buildDynamicImport(node: any, idx: number): string {
+  const src = JSON.stringify(resolveModuleSpecifier(node.source.value))
+  const specifiers: any[] = node.specifiers || []
+
+  // import 'modulo' (solo efectos secundarios)
+  if (specifiers.length === 0) {
+    return `await import(${src});`
+  }
+
+  const namespaceSpec = specifiers.find((s) => s.type === 'ImportNamespaceSpecifier')
+  const destructure: string[] = []
+
+  for (const spec of specifiers) {
+    if (spec.type === 'ImportDefaultSpecifier') {
+      destructure.push(`default: ${spec.local.name}`)
+    } else if (spec.type === 'ImportSpecifier') {
+      const imported = spec.imported.name ?? spec.imported.value
+      destructure.push(imported === spec.local.name ? imported : `${JSON.stringify(imported)}: ${spec.local.name}`)
+    }
+  }
+
+  // import * as ns from 'modulo'
+  if (namespaceSpec && destructure.length === 0) {
+    return `const ${namespaceSpec.local.name} = await import(${src});`
+  }
+
+  // import def, * as ns from 'modulo' (namespace + default/named)
+  if (namespaceSpec) {
+    const tmp = `__gojs_import_${idx}__`
+    return `const ${tmp} = await import(${src}); const ${namespaceSpec.local.name} = ${tmp}; const { ${destructure.join(', ')} } = ${tmp};`
+  }
+
+  // import def from 'modulo' / import { a, b as c } from 'modulo'
+  return `const { ${destructure.join(', ')} } = await import(${src});`
 }
 
 /**
@@ -54,6 +167,12 @@ export function detectExpressions(code: string): ExpressionInfo[] {
             continue // Ignorar identificadores sueltos
           }
 
+          // No envolver expresiones `await` sueltas: la inyección usa una IIFE
+          // síncrona y `await` fuera de un contexto async provocaría un error.
+          if (expr.type === 'AwaitExpression') {
+            continue
+          }
+
           // Verificar que no sea un console.log o similar
           if (
             expr.type === 'CallExpression' &&
@@ -79,6 +198,9 @@ export function detectExpressions(code: string): ExpressionInfo[] {
 
   return expressions
 }
+
+// Número de líneas que ocupa el bloque de inyección (ver plantilla en injectExpressionLogging)
+const INJECTION_TEMPLATE_LINES = 7
 
 /**
  * Inyecta código para capturar y mostrar expresiones en la consola
@@ -106,7 +228,9 @@ export function injectExpressionLogging(code: string, options: InjectExpressionL
   expressions.sort((a, b) => b.start - a.start)
 
   let modifiedCode = code
-  let linesAdded = 0
+
+  // Registrar cuántas líneas añade cada inyección y en qué línea original ocurre
+  const addedByLine: Array<{ line: number; added: number }> = []
 
   for (const expr of expressions) {
     const exprCode = code.substring(expr.start, expr.end)
@@ -122,31 +246,23 @@ export function injectExpressionLogging(code: string, options: InjectExpressionL
       return __expr_result__;
     })();`
 
-    // Contar líneas añadidas por esta inyección
-    const injectionLines = injection.split('\n').length - 1 // -1 porque reemplaza una línea
-    linesAdded += injectionLines
+    // Líneas netas añadidas = líneas de la inyección - líneas que ocupaba la expresión original
+    const exprSpanLines = exprCode.split('\n').length
+    const added = INJECTION_TEMPLATE_LINES - exprSpanLines
+    addedByLine.push({ line: expr.line, added })
 
     modifiedCode = modifiedCode.substring(0, expr.start) + injection + modifiedCode.substring(expr.end)
   }
 
-  // Construir mapa de líneas: línea en código modificado -> línea en código original
-  // AsyncFunction añade 1 línea al inicio
-  const modifiedLines = modifiedCode.split('\n')
-
-  // Mapear considerando las inyecciones
-  let originalLineNum = 1
-  let injectedLineOffset = 0
-
-  for (let modLineNum = 2; modLineNum <= modifiedLines.length + 1; modLineNum++) {
-    // Calcular cuántas líneas de inyección hay antes de esta línea
-    const exprsBeforeLine = expressions.filter((e) => e.line < originalLineNum).length
-    injectedLineOffset = exprsBeforeLine * 6 // cada inyección añade 6 líneas
-
-    if (modLineNum - 1 - injectedLineOffset >= 0) {
-      originalLineNum = modLineNum - 1 - injectedLineOffset
+  // Construir mapa: línea en código modificado -> línea original.
+  // Una línea original L se desplaza hacia abajo por todas las inyecciones anteriores a ella.
+  const originalLines = code.split('\n').length
+  for (let orig = 1; orig <= originalLines; orig++) {
+    let shift = 0
+    for (const entry of addedByLine) {
+      if (entry.line < orig) shift += entry.added
     }
-
-    lineMap.set(modLineNum, originalLineNum)
+    lineMap.set(orig + shift, orig)
   }
 
   return modifiedCode

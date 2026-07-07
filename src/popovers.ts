@@ -14,24 +14,51 @@ export function initHeaderPopovers() {
   const attachHintTooltip = (button: HTMLElement | null, tooltip: HTMLElement | null) => {
     if (!button || !tooltip) return
 
-    const show = () => (tooltip as any).showPopover({ source: button })
-    const hide = () => tooltip.hidePopover()
+    // Posiciona el tooltip debajo (y centrado respecto a) el botón usando coordenadas
+    // de viewport. No dependemos de CSS Anchor Positioning porque Firefox/Zen no lo
+    // soportan y el popover acababa mal posicionado (ver issue #3).
+    const position = () => {
+      const btnRect = button.getBoundingClientRect()
+      const tipRect = tooltip.getBoundingClientRect()
+      const margin = 8
+      const halfWidth = tipRect.width / 2
+
+      let centerX = btnRect.left + btnRect.width / 2
+      // Evitar que el tooltip se salga por los bordes de la ventana
+      centerX = Math.max(margin + halfWidth, Math.min(centerX, window.innerWidth - margin - halfWidth))
+
+      tooltip.style.left = `${centerX}px`
+      tooltip.style.top = `${btnRect.bottom + 6}px`
+    }
+
+    const show = () => {
+      try {
+        // showPopover() sin argumentos: la variante con { source } es muy reciente y
+        // no está disponible en todos los navegadores.
+        if (!tooltip.matches(':popover-open')) tooltip.showPopover()
+      } catch {
+        /* el popover ya estaba abierto */
+      }
+      position()
+    }
+    const hide = () => {
+      try {
+        tooltip.hidePopover()
+      } catch {
+        /* el popover ya estaba cerrado */
+      }
+    }
 
     button.addEventListener('mouseover', show)
     button.addEventListener('mouseout', hide)
     button.addEventListener('focus', show)
     button.addEventListener('blur', hide)
 
-    window.addEventListener(
-      'scroll',
-      () => {
-        if (tooltip.matches(':popover-open')) (tooltip as any).showPopover({ source: button })
-      },
-      { passive: true },
-    )
-    window.addEventListener('resize', () => {
-      if (tooltip.matches(':popover-open')) (tooltip as any).showPopover({ source: button })
-    })
+    const reposition = () => {
+      if (tooltip.matches(':popover-open')) position()
+    }
+    window.addEventListener('scroll', reposition, { passive: true })
+    window.addEventListener('resize', reposition)
   }
 
   attachHintTooltip(autorunToggleButton, tooltipAutorun)
