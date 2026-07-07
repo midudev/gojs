@@ -20,6 +20,11 @@ interface CompleteMessage {
   type: 'complete'
 }
 
+interface TimingsMessage {
+  type: 'timings'
+  durations: Record<number, number> // línea original -> milisegundos
+}
+
 interface ErrorMessage {
   type: 'error'
   message: string
@@ -29,6 +34,10 @@ interface ErrorMessage {
 // Objeto para rastrear timers y counters
 const timers: Map<string, number> = new Map()
 const counters: Map<string, number> = new Map()
+
+// Marcas de tiempo por statement (inyectadas por injectTimings): { línea, instante }.
+// La duración de cada statement es la diferencia con la siguiente marca.
+let timeMarks: Array<{ line: number; t: number }> = []
 
 // Mapa de líneas actual (se actualiza con cada ejecución)
 let currentLineMap: Record<number, number> = {}
@@ -136,6 +145,9 @@ const customConsole = {
   countReset: (label: string = 'default') => {
     counters.delete(label)
   },
+  __time__: (line: number) => {
+    timeMarks.push({ line, t: performance.now() })
+  },
   __logExpression__: (value: any, lineNumber: number) => {
     // Serializar el valor para evitar errores de clonación (promesas, funciones, etc.)
     const serializedValue = serializeConsoleValue(value)
@@ -217,9 +229,10 @@ self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
     // Actualizar el lineMap para esta ejecución
     currentLineMap = lineMap || {}
 
-    // Limpiar timers y counters
+    // Limpiar timers, counters y marcas de tiempo
     timers.clear()
     counters.clear()
+    timeMarks = []
 
     try {
       // Ejecutar código en un contexto aislado con console personalizado
@@ -242,6 +255,23 @@ self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
         stack: error.stack,
       }
       self.postMessage(message)
+    } finally {
+      // Calcular la duración de cada statement a partir de las marcas registradas.
+      // La duración de la marca i es el tiempo hasta la marca i+1. La última marca
+      // (centinela, línea 0) solo sirve para cerrar la anterior. Si el código lanzó,
+      // enviamos las duraciones parciales de los statements que sí completaron.
+      if (timeMarks.length > 1) {
+        const durations: Record<number, number> = {}
+        for (let i = 0; i < timeMarks.length - 1; i++) {
+          const { line, t } = timeMarks[i]
+          if (line <= 0) continue
+          const duration = timeMarks[i + 1].t - t
+          durations[line] = (durations[line] || 0) + duration
+        }
+        const message: TimingsMessage = { type: 'timings', durations }
+        self.postMessage(message)
+      }
+      timeMarks = []
     }
   }
 }

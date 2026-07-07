@@ -27,6 +27,33 @@ function mapOriginalCodeLines(code: string) {
 // CDN usado para resolver imports de paquetes npm (bare specifiers) a módulos ESM.
 const ESM_CDN_BASE = 'https://esm.sh/'
 
+// Sucrase se carga de forma diferida: solo se necesita al ejecutar y no debe
+// engordar el bundle inicial.
+let sucrasePromise: Promise<typeof import('sucrase')> | null = null
+
+/**
+ * Transpila TypeScript a JavaScript eliminando únicamente los tipos (sin comprobación
+ * de tipos ni transformaciones de ES), de forma que el código pueda ejecutarse en el
+ * worker. Preserva el número de líneas del original para no romper el mapeo entre la
+ * consola y el editor. Si el código no es parseable (p. ej. a medio escribir) se
+ * devuelve tal cual para que el error real lo reporte el ejecutor.
+ */
+export async function transpileToJs(code: string): Promise<string> {
+  if (!sucrasePromise) {
+    sucrasePromise = import('sucrase')
+  }
+
+  try {
+    const { transform } = await sucrasePromise
+    return transform(code, {
+      transforms: ['typescript'],
+      disableESTransforms: true, // conservar import/export ESM y sintaxis moderna intactos
+    }).code
+  } catch {
+    return code
+  }
+}
+
 /**
  * Resuelve el specifier de un import a algo que `import()` pueda cargar en el navegador.
  *
@@ -52,6 +79,81 @@ export function resolveModuleSpecifier(specifier: string): string {
 
   // Bare specifier -> paquete npm servido como ESM desde el CDN.
   return `${ESM_CDN_BASE}${value}`
+}
+
+/**
+ * Devuelve la raíz del paquete de un bare specifier:
+ *   'lodash-es'        -> 'lodash-es'
+ *   'lodash-es/fp'     -> 'lodash-es'
+ *   '@scope/pkg/sub'   -> '@scope/pkg'
+ */
+function packageRootOf(specifier: string): string {
+  const parts = specifier.split('/')
+  if (specifier.startsWith('@')) return parts.slice(0, 2).join('/')
+  return parts[0]
+}
+
+/**
+ * Extrae los "bare specifiers" (paquetes npm) importados en el código, tanto de
+ * `import ... from '...'` como de `import('...')` dinámicos. Ignora URLs, rutas
+ * relativas/absolutas y esquemas (node:, data:, ...).
+ */
+export function collectBareSpecifiers(code: string): string[] {
+  let ast: any
+  try {
+    ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' })
+  } catch {
+    return []
+  }
+
+  const found = new Set<string>()
+
+  const consider = (value: unknown) => {
+    if (typeof value !== 'string') return
+    if (resolveModuleSpecifier(value) === value) return // no es bare (URL/relativa/esquema)
+    found.add(value)
+  }
+
+  const walk = (node: any) => {
+    if (!node || typeof node.type !== 'string') return
+
+    if (node.type === 'ImportDeclaration' || node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') {
+      if (node.source) consider(node.source.value)
+    } else if (
+      node.type === 'ImportExpression' &&
+      node.source &&
+      node.source.type === 'Literal'
+    ) {
+      consider(node.source.value)
+    }
+
+    for (const key of Object.keys(node)) {
+      const child = (node as any)[key]
+      if (Array.isArray(child)) child.forEach(walk)
+      else if (child && typeof child.type === 'string') walk(child)
+    }
+  }
+
+  walk(ast)
+  return [...found]
+}
+
+/**
+ * Construye un import map (formato WICG) que mapea cada paquete npm importado a su
+ * URL en el CDN ESM, incluyendo la entrada con barra final para resolver subrutas.
+ * Este mapa alimenta al LSP de modern-monaco para dar IntelliSense y carga de tipos.
+ */
+export function buildImportMap(specifiers: string[]): Record<string, string> {
+  const imports: Record<string, string> = {}
+
+  for (const specifier of specifiers) {
+    imports[specifier] = resolveModuleSpecifier(specifier)
+
+    const root = packageRootOf(specifier)
+    imports[`${root}/`] = `${ESM_CDN_BASE}${root}/`
+  }
+
+  return imports
 }
 
 /**

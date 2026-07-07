@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { injectExpressionLogging, lineMap, resolveModuleSpecifier, transformImports } from './console'
+import {
+  buildImportMap,
+  collectBareSpecifiers,
+  injectExpressionLogging,
+  lineMap,
+  resolveModuleSpecifier,
+  transformImports,
+  transpileToJs,
+} from './console'
 
 describe('expression logging injection', () => {
   it('keeps automatic expression logging enabled by default', () => {
@@ -61,5 +69,59 @@ describe('transformImports', () => {
 
     expect(transformed).toContain('await import("https://esm.sh/lodash")')
     expect(transformed).toContain('default: _')
+  })
+})
+
+describe('collectBareSpecifiers', () => {
+  it('collects bare npm specifiers from static and dynamic imports', () => {
+    const code = [
+      "import { z } from 'zod'",
+      "import _ from 'lodash-es'",
+      "import './local'",
+      "import x from 'https://esm.sh/nanoid'",
+      "const m = await import('dayjs')",
+    ].join('\n')
+
+    const specifiers = collectBareSpecifiers(code).sort()
+
+    expect(specifiers).toEqual(['dayjs', 'lodash-es', 'zod'])
+  })
+
+  it('returns an empty array for code without bare imports or on parse errors', () => {
+    expect(collectBareSpecifiers("import './a'\nconst n = 1")).toEqual([])
+    expect(collectBareSpecifiers('const = = =')).toEqual([])
+  })
+})
+
+describe('buildImportMap', () => {
+  it('maps packages and their subpath prefixes to the ESM CDN', () => {
+    expect(buildImportMap(['zod'])).toEqual({
+      zod: 'https://esm.sh/zod',
+      'zod/': 'https://esm.sh/zod/',
+    })
+  })
+
+  it('uses the package root for subpath and scoped specifiers', () => {
+    expect(buildImportMap(['lodash-es/fp'])).toEqual({
+      'lodash-es/fp': 'https://esm.sh/lodash-es/fp',
+      'lodash-es/': 'https://esm.sh/lodash-es/',
+    })
+
+    expect(buildImportMap(['@scope/pkg/sub'])).toEqual({
+      '@scope/pkg/sub': 'https://esm.sh/@scope/pkg/sub',
+      '@scope/pkg/': 'https://esm.sh/@scope/pkg/',
+    })
+  })
+})
+
+describe('transpileToJs', () => {
+  it('strips TypeScript types while preserving line count', async () => {
+    const ts = 'interface User { name: string }\nconst greet = (u: User): string => u.name\nexport {}'
+    const js = await transpileToJs(ts)
+
+    expect(js).not.toContain('interface')
+    expect(js).not.toContain(': string')
+    expect(js).toContain('const greet = (u) =>')
+    expect(js.split('\n').length).toBe(ts.split('\n').length)
   })
 })

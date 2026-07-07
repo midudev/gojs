@@ -22,7 +22,15 @@ import {
   type Theme,
 } from './storage'
 import { initPrettierWorker, formatCode, destroyPrettierWorker } from './prettier'
-import { injectExpressionLogging, transformImports, lineMap } from './console'
+import {
+  injectExpressionLogging,
+  transformImports,
+  transpileToJs,
+  collectBareSpecifiers,
+  buildImportMap,
+  lineMap,
+} from './console'
+import { injectTimings } from './timings'
 import { formatConsoleValueText, isSerializedConsoleValue } from './console-values'
 import { initHeaderPopovers } from './popovers'
 import { initTabs } from './tabs'
@@ -74,6 +82,164 @@ let monaco: any = null
 let autoRunEnabled = true
 let debounceTimer: number | null = null
 let currentDecorations: any[] = [] // Para guardar las decoraciones activas
+
+// Duraciones de la última ejecución: línea original -> milisegundos.
+// Se pintan en el gutter, justo antes del número de línea (ver getLineNumbersOption).
+let lineTimings: Map<number, number> | null = null
+
+// Solo mostramos tiempos "relevantes": por debajo de este umbral (statements triviales
+// que rondan 0ms) no se pinta nada, para no llenar el gutter de ruido.
+const MIN_VISIBLE_MS = 1
+
+// Formatea una duración en un texto corto para el gutter (ej: "0ms", "4.1ms", "1.23s").
+function formatDuration(ms: number): string {
+  if (ms < 10) return `${ms.toFixed(1)}ms`
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(2)}s`
+}
+
+// ¿Hay al menos un tiempo por encima del umbral que se vaya a pintar? Solo entonces
+// merece la pena ensanchar el margen; si no, dejaría un hueco vacío a la izquierda
+// del número de línea (p. ej. con statements triviales que rondan 0ms).
+function hasVisibleTimings(): boolean {
+  if (!lineTimings) return false
+  for (const ms of lineTimings.values()) {
+    if (ms >= MIN_VISIBLE_MS) return true
+  }
+  return false
+}
+
+// Ancho del margen de números de línea. Solo se reserva espacio extra para la columna
+// de tiempos cuando de verdad hay algún tiempo visible que mostrar; en caso contrario
+// se usa el ancho normal.
+//
+// El texto de la pastilla nunca pasa de 5 caracteres ("9.8ms", "999ms", "1.23s"), así
+// que basta con un par de caracteres extra sobre los dígitos del número para que quepan
+// la pastilla y el número sin dejar un hueco grande a la izquierda. Crece con ficheros
+// largos (más dígitos) para no solaparse con números de 3+ cifras.
+function lineNumbersMinChars(): number {
+  if (!(currentSettings.lineTimings && currentSettings.lineNumbers && hasVisibleTimings())) return 5
+  const digits = String(editor?.getModel()?.getLineCount() ?? 1).length
+  return Math.max(7, digits + 5)
+}
+
+let timingGutterEl: HTMLDivElement | null = null
+
+function ensureTimingGutter(): HTMLDivElement | null {
+  if (timingGutterEl && timingGutterEl.isConnected) return timingGutterEl
+  const panel = document.querySelector('.editor-panel') as HTMLElement | null
+  if (!panel) return null
+  const el = document.createElement('div')
+  el.className = 'timing-gutter'
+  panel.appendChild(el)
+  timingGutterEl = el
+  return el
+}
+
+let timingRenderScheduled = false
+function scheduleTimingRender() {
+  if (timingRenderScheduled) return
+  timingRenderScheduled = true
+  requestAnimationFrame(() => {
+    timingRenderScheduled = false
+    renderTimingGutter()
+  })
+}
+
+function renderTimingGutter() {
+  if (!editor) return
+  const gutter = ensureTimingGutter()
+  if (!gutter) return
+
+  gutter.textContent = ''
+
+  const show = !!lineTimings && currentSettings.lineTimings && currentSettings.lineNumbers
+  if (!show) {
+    gutter.style.display = 'none'
+    return
+  }
+
+  const panel = document.querySelector('.editor-panel') as HTMLElement | null
+  const editorEl = document.getElementById('editor') as HTMLElement | null
+  const margin = editorEl?.querySelector('.margin') as HTMLElement | null
+  if (!panel || !editorEl || !margin) {
+    gutter.style.display = 'none'
+    return
+  }
+
+  const panelRect = panel.getBoundingClientRect()
+  const edRect = editorEl.getBoundingClientRect()
+  const marginRect = margin.getBoundingClientRect()
+
+  // El overlay debe cubrir SOLO la columna de números de línea, no todo el margen
+  // (que incluye el área de decoraciones/folding a la derecha). Si usáramos el ancho
+  // completo del margen, la etiqueta de tiempo (alineada a la derecha con un hueco fijo
+  // para el número) se solaparía con el propio número. Medimos la columna real desde el
+  // DOM; si no está disponible, caemos al margen completo.
+  const lineNumberEl = editorEl.querySelector('.line-numbers') as HTMLElement | null
+  const numbersRect = lineNumberEl ? lineNumberEl.getBoundingClientRect() : marginRect
+
+  gutter.style.display = 'block'
+  gutter.style.top = `${edRect.top - panelRect.top}px`
+  gutter.style.left = `${numbersRect.left - panelRect.left}px`
+  gutter.style.width = `${numbersRect.width}px`
+  gutter.style.height = `${edRect.height}px`
+
+  const scrollTop = editor.getScrollTop()
+  const model = editor.getModel()
+  const lineCount = model ? model.getLineCount() : 0
+  const lineHeight = lineCount >= 2 ? editor.getTopForLineNumber(2) - editor.getTopForLineNumber(1) : 19
+
+  // Reserva a la derecha de cada pastilla para dejar sitio al número (alineado a la
+  // derecha). Escala con los dígitos del número: así la pastilla queda pegada al número
+  // sin solaparse, tanto en ficheros de pocas líneas como de cientos.
+  const numberDigits = String(Math.max(lineCount, 1)).length
+  gutter.style.setProperty('--timing-reserve', `${8 + numberDigits * 8}px`)
+
+  for (const [line, ms] of lineTimings!) {
+    if (ms < MIN_VISIBLE_MS || line < 1 || line > lineCount) continue
+    const top = editor.getTopForLineNumber(line) - scrollTop
+    if (top < -lineHeight || top > edRect.height) continue
+
+    const label = document.createElement('div')
+    label.className = 'timing-gutter__label'
+    label.style.top = `${top}px`
+    label.style.height = `${lineHeight}px`
+
+    const pill = document.createElement('span')
+    pill.className = 'timing-gutter__pill'
+    pill.textContent = formatDuration(ms)
+    label.appendChild(pill)
+
+    gutter.appendChild(label)
+  }
+}
+
+
+// Reaplica la opción de números de línea (pasa una función nueva para forzar el
+// re-render del gutter en Monaco).
+function refreshLineNumbers() {
+  editor?.updateOptions({
+    lineNumbers: currentSettings.lineNumbers ? 'on' : 'off',
+    lineNumbersMinChars: lineNumbersMinChars(),
+  })
+  scheduleTimingRender()
+}
+
+// Descarta los tiempos medidos (p.ej. al editar, porque las líneas cambian).
+function clearLineTimings() {
+  if (lineTimings === null) return
+  lineTimings = null
+  refreshLineNumbers()
+}
+
+// Publica la altura de línea del editor como variable CSS para que la consola pueda
+// pintar cada log con exactamente la misma altura que una línea de código (así los
+// logs quedan alineados 1:1 con las líneas que los generan).
+function applyEditorLineHeightVar(fontSize: number) {
+  const lineHeight = calculateLineHeight(fontSize)
+  document.documentElement.style.setProperty('--editor-line-height', `${lineHeight}px`)
+}
 let currentThemeData: EditorThemeData | null = null
 
 // Web Worker para ejecución de código con timeout
@@ -371,25 +537,49 @@ function renderChatbotLoadingUI(
   `
 }
 
-// Inicializar editor
-async function initEditor() {
-  const editorElement = $('#editor')!
-  const loadedThemes = await Promise.all(AVAILABLE_THEMES.map(loadThemeData))
+// Reúne el código de todas las pestañas persistidas para sembrar el import map del LSP
+// en el arranque (así los imports ya presentes obtienen tipos sin recargar).
+function collectPersistedCode(): string {
+  const parts = [INITIAL_CODE]
+  try {
+    const raw = localStorage.getItem('xjs.tabs')
+    if (raw) {
+      const tabs = JSON.parse(raw)
+      if (Array.isArray(tabs)) {
+        for (const tab of tabs) {
+          if (tab && typeof tab.content === 'string') parts.push(tab.content)
+        }
+      }
+    }
+  } catch {}
+  return parts.join('\n')
+}
 
-  // Inicializar Monaco con configuración manual
-  monaco = await init({
+// Temas cargados (se conservan para poder re-configurar el LSP sin recargarlos).
+let loadedMonacoThemes: any[] = []
+
+// Construye las opciones de `init()` con el import map derivado de los paquetes dados.
+function buildMonacoInitOptions(specifiers: string[]) {
+  return {
     defaultTheme: currentSettings.theme,
-    themes: loadedThemes,
+    themes: loadedMonacoThemes,
     lsp: {
       typescript: {
+        importMap: {
+          imports: buildImportMap(specifiers),
+          scopes: {},
+        },
         compilerOptions: {
           target: 99, // ES2022
           module: 99, // ESNext
           lib: ['ES2022', 'DOM', 'DOM.Iterable'],
           strict: true,
+          // En un playground el `catch (error)` casual no debería marcar error: dejamos
+          // la variable como `any` en vez de `unknown`.
+          useUnknownInCatchVariables: false,
           esModuleInterop: true,
           skipLibCheck: true,
-          moduleResolution: 2, // NodeJs
+          moduleResolution: 100, // Bundler (resuelve import maps / CDN esm.sh)
           allowJs: true,
           checkJs: true,
           jsx: 2, // React
@@ -397,12 +587,34 @@ async function initEditor() {
         },
       },
     },
-  })
+  }
+}
+
+// Inicializar editor
+async function initEditor() {
+  const editorElement = $('#editor')!
+  loadedMonacoThemes = await Promise.all(AVAILABLE_THEMES.map(loadThemeData))
+
+  // Sembrar el import map del LSP con los paquetes ya importados en las pestañas.
+  const seedSpecifiers = collectBareSpecifiers(collectPersistedCode())
+
+  // Inicializar Monaco con configuración manual
+  monaco = await init(buildMonacoInitOptions(seedSpecifiers))
 
   // Crear instancia del editor
+  applyEditorLineHeightVar(currentSettings.fontSize)
+
+  // Usar un modelo con URI `.ts` para que el LSP de TypeScript lo type-chequee y
+  // cargue tipos de los imports. El modelo por defecto de `create({ value })` usa una
+  // URI sin extensión que el LSP no reconoce (los modelos de las pestañas ya son `.ts`).
+  const initialModel = monaco.editor.createModel(
+    INITIAL_CODE,
+    'typescript',
+    monaco.Uri.parse('inmemory://models/__initial.ts'),
+  )
+
   editor = monaco.editor.create(editorElement, {
-    value: INITIAL_CODE,
-    language: 'javascript',
+    model: initialModel,
     theme: currentSettings.theme,
     fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`,
     fontSize: currentSettings.fontSize,
@@ -411,6 +623,7 @@ async function initEditor() {
       enabled: currentSettings.minimap,
     },
     lineNumbers: currentSettings.lineNumbers ? 'on' : 'off',
+    lineNumbersMinChars: lineNumbersMinChars(),
     wordWrap: currentSettings.wordWrap ? 'on' : 'off',
     fontLigatures: currentSettings.fontLigatures,
     stickyScroll: {
@@ -897,6 +1110,10 @@ function setupEditorEvents() {
   // Escuchar cambios en el contenido del editor para ejecución automática
   if (editor) {
     editor.onDidChangeModelContent(() => {
+      // Los tiempos medidos dejan de ser válidos al cambiar el código (se desplazan
+      // las líneas), así que los descartamos hasta la próxima ejecución.
+      clearLineTimings()
+
       if (!autoRunEnabled) return
 
       // Limpiar el timer anterior
@@ -909,6 +1126,11 @@ function setupEditorEvents() {
         runCode()
       }, currentSettings.debounceDelay)
     })
+
+    // Mantener la columna de tiempos alineada con el editor al hacer scroll o al
+    // cambiar el layout (redimensionar, plegar código, etc.).
+    editor.onDidScrollChange(() => scheduleTimingRender())
+    editor.onDidLayoutChange(() => scheduleTimingRender())
   }
 }
 
@@ -1066,11 +1288,19 @@ async function runCode() {
   }
 
   try {
+    // Transpilar TypeScript a JavaScript (solo type-stripping) antes de que acorn
+    // procese el código: acorn no entiende sintaxis TS. Preserva las líneas.
+    const jsCode = await transpileToJs(code)
+
     // Reescribir imports estáticos a import() dinámicos (permite ESM desde CDN)
-    const codeWithImports = transformImports(code)
+    const codeWithImports = transformImports(jsCode)
+
+    // Instrumentar los tiempos por línea (sin alterar el conteo de líneas). Debe ir
+    // antes del logging de expresiones para que su lineMap siga siendo correcto.
+    const codeWithTimings = currentSettings.lineTimings ? injectTimings(codeWithImports) : codeWithImports
 
     // Inyectar logging de expresiones en el código
-    const modifiedCode = injectExpressionLogging(codeWithImports, { enabled: currentSettings.autoLogExpressions })
+    const modifiedCode = injectExpressionLogging(codeWithTimings, { enabled: currentSettings.autoLogExpressions })
 
     // Recrear siempre el worker para cada ejecución. Así garantizamos un contexto
     // limpio y, sobre todo, matamos cualquier callback asíncrono (timers, promesas)
@@ -1115,6 +1345,19 @@ async function runCode() {
         case 'table':
           addLog('table', message.lineNumber, message.data, message.columns)
           break
+
+        case 'timings': {
+          // Guardar las duraciones y repintar el gutter con el tiempo por línea.
+          const durations = message.durations as Record<number, number>
+          const map = new Map<number, number>()
+          for (const key in durations) {
+            map.set(Number(key), durations[key])
+          }
+          lineTimings = map
+          // Reajusta el ancho del margen según haya o no tiempos visibles y repinta.
+          refreshLineNumbers()
+          break
+        }
 
         case 'complete':
           // Limpiar timeout cuando la ejecución termina exitosamente
@@ -1747,6 +1990,7 @@ async function start() {
     const aiStorageUsage = $('#setting-ai-storage-usage') as HTMLElement
     const minimapCheck = $('#setting-minimap') as HTMLInputElement
     const lineNumbersCheck = $('#setting-line-numbers') as HTMLInputElement
+    const lineTimingsCheck = $('#setting-line-timings') as HTMLInputElement
     const wordWrapCheck = $('#setting-word-wrap') as HTMLInputElement
     const fontLigaturesCheck = $('#setting-font-ligatures') as HTMLInputElement
     const stickyScrollCheck = $('#setting-sticky-scroll') as HTMLInputElement
@@ -1881,6 +2125,7 @@ async function start() {
     if (aiModelSelect) aiModelSelect.value = getVisibleChatModelId(currentSettings.aiModelId)
     if (minimapCheck) minimapCheck.checked = currentSettings.minimap
     if (lineNumbersCheck) lineNumbersCheck.checked = currentSettings.lineNumbers
+    if (lineTimingsCheck) lineTimingsCheck.checked = currentSettings.lineTimings
     if (wordWrapCheck) wordWrapCheck.checked = currentSettings.wordWrap
     if (fontLigaturesCheck) fontLigaturesCheck.checked = currentSettings.fontLigatures
     if (stickyScrollCheck) stickyScrollCheck.checked = currentSettings.stickyScroll
@@ -1922,6 +2167,7 @@ async function start() {
       const size = parseInt((e.target as HTMLInputElement).value, 10)
       currentSettings = updateSetting(currentSettings, 'fontSize', size)
       const lineHeight = calculateLineHeight(currentSettings.fontSize)
+      applyEditorLineHeightVar(currentSettings.fontSize)
       editor?.updateOptions({
         fontSize: currentSettings.fontSize,
         lineHeight: lineHeight,
@@ -2016,7 +2262,13 @@ async function start() {
     lineNumbersCheck?.addEventListener('change', (e) => {
       const enabled = (e.target as HTMLInputElement).checked
       currentSettings = updateSetting(currentSettings, 'lineNumbers', enabled)
-      editor?.updateOptions({ lineNumbers: currentSettings.lineNumbers ? 'on' : 'off' })
+      refreshLineNumbers()
+    })
+
+    lineTimingsCheck?.addEventListener('change', (e) => {
+      const enabled = (e.target as HTMLInputElement).checked
+      currentSettings = updateSetting(currentSettings, 'lineTimings', enabled)
+      refreshLineNumbers()
     })
 
     wordWrapCheck?.addEventListener('change', (e) => {

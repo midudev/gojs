@@ -50,8 +50,8 @@ function saveState() {
 
 function createModelForTab(t: Tab) {
   if (!monaco) return
-  const uri = monaco.Uri.parse(`inmemory://models/${t.id}.js`)
-  t.model = monaco.editor.createModel(t.content, 'javascript', uri)
+  const uri = monaco.Uri.parse(`inmemory://models/${t.id}.ts`)
+  t.model = monaco.editor.createModel(t.content, 'typescript', uri)
 }
 
 function ensureAtLeastOneTab() {
