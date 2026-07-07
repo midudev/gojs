@@ -12,7 +12,10 @@
     "native:dev": "cd native && zig build dev",
     "native:run": "cd native && zig build run",
     "native:package": "cd native && zig build package",
-    "native:doctor": "cd native && zig build doctor"
+    "native:doctor": "cd native && zig build doctor",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build"
   },
   "keywords": [
     "javascript",
@@ -25,6 +28,7 @@
   "license": "MIT",
   "packageManager": "pnpm@11.0.9",
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "26.1.0",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
@@ -48,6 +52,7 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "streamdown": "2.5.0",
+    "sucrase": "^3.35.1",
     "tailwindcss": "4.3.2",
     "tm-themes": "1.12.2"
   }

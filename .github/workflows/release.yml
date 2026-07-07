@@ -1,0 +1,101 @@
+name: Release Desktop App
+
+# Builds the Tauri desktop app for macOS, Linux and Windows and publishes a
+# GitHub Release with the installers on every push to main.
+on:
+  push:
+    branches: [main]
+    # Avoid rebuilding when only docs / non-app files change.
+    paths-ignore:
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch: {}
+
+# Allow the workflow to create releases and upload the built binaries.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS: a single universal binary (Apple Silicon + Intel).
+          - platform: macos-latest
+            args: '--target universal-apple-darwin'
+            rust-targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+          # Linux: build on 22.04 for broad glibc compatibility (deb/rpm/AppImage).
+          - platform: ubuntu-22.04
+            args: ''
+            rust-targets: ''
+          # Windows: .msi + NSIS installers.
+          - platform: windows-latest
+            args: ''
+            rust-targets: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            build-essential \
+            curl wget file
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and release the desktop app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # A unique tag/release per push to main so history is preserved.
+          tagName: desktop-v__VERSION__-build.${{ github.run_number }}
+          releaseName: 'GoJS Desktop v__VERSION__ (build ${{ github.run_number }})'
+          releaseBody: |
+            Automated desktop build of GoJS.
+
+            Commit: ${{ github.sha }}
+
+            Download the installer for your platform below:
+            - **macOS**: `.dmg` (universal — Apple Silicon & Intel)
+            - **Windows**: `.msi` or `.exe` (NSIS setup)
+            - **Linux**: `.AppImage`, `.deb` or `.rpm`
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

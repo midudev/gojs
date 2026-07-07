@@ -16,6 +16,10 @@ native/dist
 native/zig-out
 native/third_party/cef
 
+# Tauri (desktop app)
+src-tauri/target
+src-tauri/gen
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
