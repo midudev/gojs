@@ -362,6 +362,43 @@ body {
 .editor-panel {
   flex: 1;
   min-width: 300px;
+  position: relative;
+}
+
+/* Columna superpuesta que muestra el tiempo de ejecución de cada línea, a la
+   izquierda de los números de línea del editor. */
+.timing-gutter {
+  position: absolute;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 5;
+}
+
+.timing-gutter__label {
+  position: absolute;
+  left: 0;
+  /* Hueco a la derecha para el número de línea (alineado a la derecha). Lo fija
+     renderTimingGutter según los dígitos del número; 18px es solo el valor por defecto. */
+  right: var(--timing-reserve, 18px);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+/* Pastilla que envuelve el tiempo: fondo algo más oscuro, esquinas redondeadas y
+   poco padding lateral para que quede compacta y pegada al número. */
+.timing-gutter__pill {
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.28);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+  line-height: 1.4;
+  color: var(--color-text-secondary, #6b7280);
+  white-space: nowrap;
 }
 
 .output-panel {
@@ -447,23 +484,32 @@ body {
 }
 
 .log-entry {
-  padding: 2px 12px;
-  margin-bottom: 1px;
-  border-radius: 4px;
-  border-left: 1px solid transparent;
+  /* Cada fila ocupa exactamente la altura de una línea del editor (var --editor-line-height)
+     para quedar alineada 1:1 con la línea de código que la generó. El hueco entre logs se
+     consigue SIN cambiar esa altura: un borde vertical transparente + background-clip:
+     padding-box hace que el fondo (la "píldora") no llegue al borde y se vea a través de él
+     el fondo del panel. Así hay separación visual pero el pitch sigue siendo 1 línea. */
+  box-sizing: border-box;
+  min-height: var(--editor-line-height, 22px);
+  padding: 0 12px;
+  border-block: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 5px;
+  line-height: 1.25;
   word-wrap: break-word;
   white-space: pre-wrap;
   background-color: transparent;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   color: var(--console-text-primary, var(--color-text-primary));
   cursor: default;
   transition: background-color 0.15s ease;
-  border: 1px solid transparent;
 
+  /* outline (no border) para no alterar la altura de la fila en hover */
   &:hover {
-    border: 1px solid var(--surface-border);
+    outline: 1px solid var(--surface-border);
+    outline-offset: -3px;
   }
 
   &.log {

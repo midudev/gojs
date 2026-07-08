@@ -51,6 +51,7 @@ export interface EditorSettings {
   aiModelId: string
   minimap: boolean
   lineNumbers: boolean
+  lineTimings: boolean
   wordWrap: boolean
   fontLigatures: boolean
   stickyScroll: boolean
@@ -72,6 +73,7 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   aiModelId: DEFAULT_CHATBOT_MODEL_ID,
   minimap: false,
   lineNumbers: true,
+  lineTimings: true,
   wordWrap: false,
   fontLigatures: true,
   stickyScroll: true,
@@ -166,6 +168,7 @@ function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
         : DEFAULT_SETTINGS.aiModelId,
     minimap: validateBoolean(settings.minimap, DEFAULT_SETTINGS.minimap),
     lineNumbers: validateBoolean(settings.lineNumbers, DEFAULT_SETTINGS.lineNumbers),
+    lineTimings: validateBoolean(settings.lineTimings, DEFAULT_SETTINGS.lineTimings),
     wordWrap: validateBoolean(settings.wordWrap, DEFAULT_SETTINGS.wordWrap),
     fontLigatures: validateBoolean(settings.fontLigatures, DEFAULT_SETTINGS.fontLigatures),
     stickyScroll: validateBoolean(settings.stickyScroll, DEFAULT_SETTINGS.stickyScroll),
