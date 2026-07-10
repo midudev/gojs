@@ -13,6 +13,8 @@ import {
   resolveAutoModelId,
 } from './ai-models'
 import {
+  AGENT_DEMO_FINAL_CODE,
+  AGENT_DEMO_INITIAL_CODE,
   INITIAL_CODE,
   SHOWCASE_CODE,
   SHOWCASE_INITIAL_CODE,
@@ -368,7 +370,8 @@ let nativeRunSeq = 0
 let latestNativeRunGen = 0
 
 const embedMode = new URLSearchParams(window.location.search).get('embed')
-const isLandingEmbed = embedMode === 'landing' || embedMode === 'showcase'
+const isAgentDemoEmbed = embedMode === 'agent-demo'
+const isLandingEmbed = embedMode === 'landing' || embedMode === 'showcase' || isAgentDemoEmbed
 const isShowcaseEmbed = embedMode === 'showcase'
 let currentSettings = loadSettings()
 
@@ -378,7 +381,7 @@ if (isLandingEmbed) {
     theme: 'dracula',
     fontFamily: 'Cascadia Code',
     layoutOrientation: 'horizontal',
-    aiEnabled: false,
+    aiEnabled: isAgentDemoEmbed,
     lineNumbers: true,
     lineTimings: true,
     autoLogExpressions: true,
@@ -388,6 +391,9 @@ if (isLandingEmbed) {
 
 if (isShowcaseEmbed) {
   document.documentElement.classList.add('showcase-embed')
+}
+if (isAgentDemoEmbed) {
+  document.documentElement.classList.add('agent-demo-embed')
 }
 let chromePromptApiModelAvailable = false
 let chromePromptApiAvailabilityChecked = false
@@ -1249,7 +1255,7 @@ function renderChatbotLoadingUI(
 // Reúne el código de todas las pestañas persistidas para sembrar el import map del LSP
 // en el arranque (así los imports ya presentes obtienen tipos sin recargar).
 function collectPersistedCode(): string {
-  const parts = [isShowcaseEmbed ? SHOWCASE_CODE : INITIAL_CODE]
+  const parts = [isShowcaseEmbed ? SHOWCASE_CODE : isAgentDemoEmbed ? AGENT_DEMO_FINAL_CODE : INITIAL_CODE]
   try {
     const raw = localStorage.getItem('xjs.tabs')
     if (raw) {
@@ -1359,7 +1365,7 @@ async function initEditor() {
   // cargue tipos de los imports. El modelo por defecto de `create({ value })` usa una
   // URI sin extensión que el LSP no reconoce (los modelos de las pestañas ya son `.ts`).
   const initialModel = monaco.editor.createModel(
-    isShowcaseEmbed ? SHOWCASE_INITIAL_CODE : INITIAL_CODE,
+    isShowcaseEmbed ? SHOWCASE_INITIAL_CODE : isAgentDemoEmbed ? AGENT_DEMO_INITIAL_CODE : INITIAL_CODE,
     'typescript',
     monaco.Uri.parse('inmemory://models/__initial.ts'),
   )
@@ -2064,6 +2070,7 @@ let lastSnapshotTabId: string | null = null
  * `auto`) se limitan por tiempo; los manuales (`manual`) se guardan siempre.
  */
 function maybeSnapshot(code: string, source: HistorySource) {
+  if (isLandingEmbed) return
   const tabId = getActiveTabId()
   if (!tabId) return
 
@@ -3650,6 +3657,131 @@ async function initShowcaseTyping(): Promise<void> {
   cleanup()
 }
 
+async function initAgentDemo(): Promise<void> {
+  if (!isAgentDemoEmbed || !editor || !monaco) return
+
+  const messages = document.querySelector<HTMLElement>('#chatbot-messages')
+  const panel = document.querySelector<HTMLElement>('#chatbot-panel')
+  const input = document.querySelector<HTMLTextAreaElement>('#chatbot-input')
+  const modelLabel = document.querySelector<HTMLElement>('#chatbot-model-label')
+  const tabName = document.querySelector<HTMLElement>('.tab-item.active .tab-name')
+  const model = editor.getModel()
+  if (!messages || !panel || !input || !model) return
+
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const wait = (duration: number) =>
+    new Promise<void>((resolve) => window.setTimeout(resolve, reducedMotion ? 0 : duration))
+  const scrollChat = () => messages.scrollTo({ top: messages.scrollHeight, behavior: reducedMotion ? 'auto' : 'smooth' })
+  const appendMessage = (role: 'user' | 'assistant', content: string) => {
+    const message = document.createElement('div')
+    message.className = `chatbot-message ${role}`
+    message.innerHTML = `
+      <div class="chatbot-message-role">${role === 'user' ? 'You' : 'AI Assistant'}</div>
+      <div class="chatbot-message-content">${escapeHtml(content)}</div>`
+    messages.appendChild(message)
+    scrollChat()
+    return message
+  }
+
+  messages.innerHTML = ''
+  panel.classList.remove('is-empty')
+  input.value = ''
+  input.placeholder = 'Ask Agent to edit your code…'
+  input.disabled = true
+  if (modelLabel) modelLabel.textContent = 'Agent · local'
+
+  model.setValue(AGENT_DEMO_INITIAL_CODE)
+  if (tabName) tabName.textContent = 'cart.ts'
+  editor.updateOptions({
+    readOnly: true,
+    domReadOnly: true,
+    lineNumbers: 'on',
+    minimap: { enabled: false },
+  })
+  editor.setPosition({ lineNumber: 7, column: 3 })
+  editor.revealLineInCenter(7)
+
+  window.parent.postMessage({ type: 'gojs-agent-demo-ready' }, window.location.origin)
+  await wait(650)
+
+  appendMessage('user', 'Make applyDiscount immutable and keep prices to two decimals.')
+  await wait(500)
+
+  const status = document.createElement('div')
+  status.className = 'agent-status'
+  status.textContent = 'Planning the safest edit…'
+  messages.appendChild(status)
+  scrollChat()
+  await wait(800)
+  status.textContent = 'Editing cart.ts…'
+
+  const runGroup = document.createElement('div')
+  runGroup.className = 'agent-run'
+  const runHeader = document.createElement('button')
+  runHeader.type = 'button'
+  runHeader.className = 'agent-run-header'
+  runHeader.innerHTML =
+    '<span>Working…</span><svg class="agent-run-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6l6 -6"/></svg>'
+  const runSteps = document.createElement('div')
+  runSteps.className = 'agent-run-steps'
+  runGroup.append(runHeader, runSteps)
+  messages.insertBefore(runGroup, status)
+
+  const editCard = document.createElement('div')
+  editCard.className = 'agent-card edit'
+  const editHead = document.createElement('button')
+  editHead.type = 'button'
+  editHead.className = 'agent-card-head'
+  editHead.setAttribute('aria-expanded', 'true')
+  editHead.innerHTML = `
+    <span class="agent-file-badge agent-file-badge--ts">TS</span>
+    <span class="agent-card-title">cart.ts</span>
+    <span class="agent-card-stats"><span class="diff-add">+7</span><span class="diff-del">−8</span></span>
+    <svg class="agent-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6l6 -6"/></svg>`
+  const diff = document.createElement('div')
+  diff.className = 'agent-card-diff'
+  diff.innerHTML = `
+    <div class="diff-row del"><span class="diff-num">9</span><span class="diff-sign">−</span><span class="diff-code">  items.forEach(item =&gt; {</span></div>
+    <div class="diff-row del"><span class="diff-num">10</span><span class="diff-sign">−</span><span class="diff-code">    item.price = item.price * (1 - percent)</span></div>
+    <div class="diff-row add"><span class="diff-num">9</span><span class="diff-sign">+</span><span class="diff-code">  items.map(item =&gt; ({</span></div>
+    <div class="diff-row add"><span class="diff-num">10</span><span class="diff-sign">+</span><span class="diff-code">    ...item,</span></div>
+    <div class="diff-row add"><span class="diff-num">11</span><span class="diff-sign">+</span><span class="diff-code">    price: Number((item.price * (1 - percent)).toFixed(2))</span></div>`
+  editHead.addEventListener('click', () => {
+    const collapsed = editCard.classList.toggle('collapsed')
+    editHead.setAttribute('aria-expanded', String(!collapsed))
+  })
+  editCard.append(editHead, diff)
+  runSteps.appendChild(editCard)
+  scrollChat()
+  await wait(650)
+
+  model.setValue(AGENT_DEMO_FINAL_CODE)
+  if (tabName) tabName.textContent = 'cart.ts'
+  editor.setPosition({ lineNumber: 12, column: 5 })
+  editor.revealLineInCenter(12)
+  await wait(550)
+
+  status.textContent = 'Running the updated code…'
+  const runCard = document.createElement('div')
+  runCard.className = 'agent-card run'
+  runCard.innerHTML = `
+    <svg class="agent-card-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13 -8z"/></svg>
+    <span class="agent-card-title">Ran the code</span>
+    <span class="agent-card-detail">Checking…</span>`
+  runSteps.appendChild(runCard)
+  scrollChat()
+  await runCode()
+  await wait(650)
+
+  runCard.classList.add('ok')
+  const runDetail = runCard.querySelector<HTMLElement>('.agent-card-detail')
+  if (runDetail) runDetail.textContent = 'Passed · 2 values'
+  status.remove()
+  const headerLabel = runHeader.querySelector('span')
+  if (headerLabel) headerLabel.textContent = 'Worked for 3s'
+  appendMessage('assistant', 'Done. The function now returns a new array, preserves every input item, and rounds prices to two decimals.')
+}
+
 // Inicializar aplicación
 async function start() {
   window.addEventListener('pagehide', teardownApp, { once: true })
@@ -3658,6 +3790,7 @@ async function start() {
 
   await initEditor()
   void initShowcaseTyping()
+  void initAgentDemo()
   if (!isLandingEmbed) {
     await refreshChromePromptApiModelAvailability()
     enableChromePromptApiAssistantIfAvailable()
@@ -3673,6 +3806,10 @@ async function start() {
   if (layoutToggleButton && layoutHorizontalIcon && layoutVerticalIcon && resizePanelsElement) {
     const mobileLayoutMediaQuery = window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY)
     const syncLayoutOrientation = () => {
+      if (isAgentDemoEmbed) {
+        resizePanelsElement.setAttribute('orientation', 'horizontal')
+        return
+      }
       if (mobileLayoutMediaQuery.matches) {
         resizePanelsElement.setAttribute('orientation', 'vertical')
         return

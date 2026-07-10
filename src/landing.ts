@@ -83,6 +83,46 @@ function initShowcase(): void {
   observer.observe(stage)
 }
 
+function initAgentDemo(): void {
+  const frame = document.querySelector<HTMLIFrameElement>('#agent-demo-frame')
+  const loader = document.querySelector<HTMLElement>('#agent-demo-loader')
+  const stage = document.querySelector<HTMLElement>('.feature-ai')
+  if (!frame || !loader || !stage) return
+
+  let started = false
+  const load = () => {
+    if (started) return
+    started = true
+    const source = frame.dataset.src
+    if (source) frame.src = source
+  }
+
+  const onReady = (event: MessageEvent) => {
+    if (event.origin !== window.location.origin || event.source !== frame.contentWindow) return
+    if (event.data?.type !== 'gojs-agent-demo-ready') return
+    loader.classList.add('is-loaded')
+    window.setTimeout(() => loader.setAttribute('hidden', ''), 260)
+    window.removeEventListener('message', onReady)
+  }
+  window.addEventListener('message', onReady)
+
+  if (!('IntersectionObserver' in window)) {
+    load()
+    return
+  }
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      load()
+      observer.disconnect()
+    },
+    { rootMargin: '240px 0px', threshold: 0.05 },
+  )
+  observer.observe(stage)
+}
+
 initHeader()
 initReveals()
 initShowcase()
+initAgentDemo()

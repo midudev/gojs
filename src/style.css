@@ -4100,3 +4100,66 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   width: auto;
   padding-right: 4px;
 }
+
+/* Landing agent demo: this is the real editor and chat UI, with network/model
+   controls removed so a deterministic local simulation can tell the story. */
+.agent-demo-embed #autorun-toggle-button,
+.agent-demo-embed #ai-toggle-button,
+.agent-demo-embed #layout-toggle-button,
+.agent-demo-embed #runtime-toggle-button,
+.agent-demo-embed #issue-button,
+.agent-demo-embed #history-button,
+.agent-demo-embed #settings-button,
+.agent-demo-embed .add-tab-btn,
+.agent-demo-embed .tab-close,
+.agent-demo-embed .output-panel,
+.agent-demo-embed .chatbot-header,
+.agent-demo-embed .chatbot-queue {
+  display: none !important;
+}
+
+.agent-demo-embed .header {
+  min-height: 40px;
+  height: 40px;
+}
+
+.agent-demo-embed .main-content {
+  height: calc(100vh - 40px);
+}
+
+.agent-demo-embed .editor-panel {
+  min-width: 0;
+}
+
+.agent-demo-embed .chatbot-panel {
+  min-width: 260px;
+  max-width: none;
+}
+
+.agent-demo-embed .chatbot-panel.is-empty .chatbot-messages,
+.agent-demo-embed .chatbot-panel.is-empty .chatbot-composer {
+  order: initial;
+}
+
+.agent-demo-embed .chatbot-messages {
+  padding: 12px;
+  gap: 9px;
+}
+
+.agent-demo-embed .chatbot-message-content {
+  font-size: 11px;
+}
+
+.agent-demo-embed .agent-card-diff {
+  max-height: 150px;
+}
+
+.agent-demo-embed .chatbot-composer {
+  margin: 8px 10px 10px;
+  padding: 9px 11px 8px;
+}
+
+.agent-demo-embed .chatbot-input {
+  min-height: 26px;
+  font-size: 10px;
+}

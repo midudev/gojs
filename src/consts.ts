@@ -82,3 +82,49 @@ console.log('Cart:', cart);`,
 ] as const
 
 export const SHOWCASE_CODE = SHOWCASE_INITIAL_CODE + SHOWCASE_TYPING_BLOCKS.join('')
+
+export const AGENT_DEMO_INITIAL_CODE = `type CartItem = {
+  name: string
+  price: number
+}
+
+const applyDiscount = (
+  items: CartItem[],
+  percent: number
+) => {
+  items.forEach(item => {
+    item.price = item.price * (1 - percent)
+  })
+
+  return items
+}
+
+const cart = [
+  { name: 'Keyboard', price: 89.99 },
+  { name: 'Mouse', price: 49.5 }
+]
+
+applyDiscount(cart, 0.2)`
+
+export const AGENT_DEMO_FINAL_CODE = `type CartItem = {
+  name: string
+  price: number
+}
+
+const applyDiscount = (
+  items: CartItem[],
+  percent: number
+) =>
+  items.map(item => ({
+    ...item,
+    price: Number(
+      (item.price * (1 - percent)).toFixed(2)
+    )
+  }))
+
+const cart = [
+  { name: 'Keyboard', price: 89.99 },
+  { name: 'Mouse', price: 49.5 }
+]
+
+applyDiscount(cart, 0.2)`

@@ -1,4 +1,10 @@
-import { INITIAL_CODE, SHOWCASE_CODE, SHOWCASE_INITIAL_CODE } from './consts'
+import {
+  AGENT_DEMO_FINAL_CODE,
+  AGENT_DEMO_INITIAL_CODE,
+  INITIAL_CODE,
+  SHOWCASE_CODE,
+  SHOWCASE_INITIAL_CODE,
+} from './consts'
 import { clearHistory } from './history'
 
 type MonacoLike = any
@@ -20,7 +26,7 @@ type TabsState = {
 }
 
 const EMBED_MODE = new URLSearchParams(window.location.search).get('embed')
-const IS_LANDING_EMBED = EMBED_MODE === 'landing' || EMBED_MODE === 'showcase'
+const IS_LANDING_EMBED = EMBED_MODE === 'landing' || EMBED_MODE === 'showcase' || EMBED_MODE === 'agent-demo'
 const STORAGE_TABS = IS_LANDING_EMBED ? `xjs.tabs.${EMBED_MODE}.v1` : 'xjs.tabs'
 const STORAGE_ACTIVE = IS_LANDING_EMBED ? `xjs.activeTabId.${EMBED_MODE}.v1` : 'xjs.activeTabId'
 
@@ -100,9 +106,12 @@ function ensureAtLeastOneTab() {
     const showcaseCode = window.matchMedia('(prefers-reduced-motion: reduce)').matches
       ? SHOWCASE_CODE
       : SHOWCASE_INITIAL_CODE
+    const agentDemoCode = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? AGENT_DEMO_FINAL_CODE
+      : AGENT_DEMO_INITIAL_CODE
     const tab: Tab = {
       id: generateId(),
-      content: EMBED_MODE === 'showcase' ? showcaseCode : INITIAL_CODE,
+      content: EMBED_MODE === 'showcase' ? showcaseCode : EMBED_MODE === 'agent-demo' ? agentDemoCode : INITIAL_CODE,
       isDirty: false,
       createdAt: Date.now(),
       updatedAt: Date.now(),

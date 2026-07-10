@@ -57,7 +57,7 @@
       }
       try {
         var embedMode = new URLSearchParams(location.search).get('embed')
-        var isLandingEmbed = embedMode === 'landing' || embedMode === 'showcase'
+        var isLandingEmbed = embedMode === 'landing' || embedMode === 'showcase' || embedMode === 'agent-demo'
         var theme = isLandingEmbed ? 'dracula' : 'vitesse-dark'
         var raw = localStorage.getItem('xjs-settings')
         if (raw && !isLandingEmbed) {
@@ -120,6 +120,7 @@
       <nav class="site-nav" aria-label="Main navigation">
         <a href="#playground">Playground</a>
         <a href="#features">Why GoJS</a>
+        <a href="#pricing">Pricing</a>
         <a href="#desktop">Desktop</a>
         <a href="https://github.com/midudev/gojs" target="_blank" rel="noopener noreferrer">GitHub</a>
       </nav>
@@ -260,10 +261,13 @@ packageJson.name</code></pre>
             <p class="honesty-note">Model download requires a network connection once. Inference then happens on your machine.</p>
           </div>
           <div class="ai-specimen">
-            <div class="ai-orbit" aria-hidden="true"><i></i><span>✦</span></div>
-            <div class="ai-message">Make this function immutable and explain why.</div>
-            <div class="ai-status"><span></span> qwen coder · on device</div>
-            <div class="privacy-meter"><span>CODE SENT TO A SERVER</span><strong>0 bytes</strong></div>
+            <div class="agent-demo-label" aria-hidden="true">SIMULATED AGENT · REAL GOJS UI</div>
+            <div id="agent-demo-loader" class="agent-demo-loader">
+              <div class="loader-code" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+              <p>Preparing the local agent…</p>
+            </div>
+            <iframe id="agent-demo-frame" class="agent-demo-frame" data-src="/app/?embed=agent-demo"
+              title="Simulated GoJS agent editing a TypeScript file" loading="lazy"></iframe>
           </div>
         </article>
 
@@ -294,6 +298,75 @@ packageJson.name</code></pre>
         <a class="github-card" href="https://github.com/midudev/gojs" target="_blank" rel="noopener noreferrer">
           <span>github.com/midudev/gojs</span><strong>View the source</strong><i>MIT LICENSE ↗</i>
         </a>
+      </section>
+
+      <section class="pricing-section reveal" id="pricing" aria-labelledby="pricing-title">
+        <header class="pricing-heading">
+          <div>
+            <p class="section-kicker">RADICALLY SIMPLE PRICING</p>
+            <h2 id="pricing-title">Choose your plan.<br><em>They all cost nothing.</em></h2>
+          </div>
+          <p>No trials, locked features, usage limits, or surprise invoices. GoJS is free and open
+            source—and it is staying that way.</p>
+        </header>
+
+        <div class="pricing-grid">
+          <article class="pricing-card">
+            <div class="pricing-card-head">
+              <span>AVAILABLE NOW</span>
+            </div>
+            <h3>Browser</h3>
+            <div class="price"><strong>0<span class="price-currency">€</span></strong><small>forever</small></div>
+            <p>Open the playground and start experimenting immediately.</p>
+            <ul>
+              <li>JavaScript and TypeScript</li>
+              <li>Inline values and timings</li>
+              <li>Local browser AI</li>
+            </ul>
+            <a class="button button-primary pricing-button" href="/app/">Start coding <span aria-hidden="true">→</span></a>
+          </article>
+
+          <article class="pricing-card pricing-card-featured">
+            <div class="pricing-card-head">
+              <span>COMING SOON</span>
+            </div>
+            <h3>Native</h3>
+            <div class="price"><strong>0<span class="price-currency">€</span></strong><small>forever</small></div>
+            <p>Everything in the browser, plus the power of your machine.</p>
+            <ul>
+              <li>Native Node.js runtime</li>
+              <li>Local files and npm packages</li>
+              <li>On-device AI models</li>
+            </ul>
+            <span class="button pricing-button pricing-button-disabled" aria-disabled="true">Free download coming soon</span>
+          </article>
+
+          <article class="pricing-card">
+            <div class="pricing-card-head">
+              <span>MIT LICENSE</span>
+            </div>
+            <h3>Everything</h3>
+            <div class="price"><strong>0<span class="price-currency">€</span></strong><small>forever</small></div>
+            <p>Use it, inspect it, change it, and build on top of it.</p>
+            <ul>
+              <li>Every feature included</li>
+              <li>No account or license key</li>
+              <li>Source code on GitHub</li>
+            </ul>
+            <a class="button button-secondary pricing-button" href="https://github.com/midudev/gojs"
+              target="_blank" rel="noopener noreferrer">View the source <span aria-hidden="true">↗</span></a>
+          </article>
+        </div>
+
+        <div class="sponsor-strip">
+          <div>
+            <p>WANT TO PAY ANYWAY?</p>
+            <strong>Pay whatever GoJS is worth to you.</strong>
+            <span>Entirely optional. The product remains free for everyone.</span>
+          </div>
+          <a class="button button-light" href="https://github.com/sponsors/midudev" target="_blank"
+            rel="noopener noreferrer">Sponsor midudev <span aria-hidden="true">♥</span></a>
+        </div>
       </section>
 
       <section class="desktop-section reveal" id="desktop" aria-labelledby="desktop-title">
