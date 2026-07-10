@@ -1,4 +1,5 @@
 import { INITIAL_CODE } from './consts'
+import { clearHistory } from './history'
 
 type MonacoLike = any
 type EditorLike = any
@@ -27,6 +28,17 @@ let monaco: MonacoLike | null = null
 let onTabActivated: (() => void) | null = null
 
 const generateId = () => Math.random().toString(36).slice(2, 10)
+
+/** Id de la pestaña activa (o null si no hay ninguna). */
+export function getActiveTabId(): string | null {
+  return state.activeId
+}
+
+/** Nombre visible de la pestaña activa (para etiquetar versiones). */
+export function getActiveTabTitle(): string {
+  const active = state.tabs.find((t) => t.id === state.activeId)
+  return active ? getTabTitle(active) : 'untitled'
+}
 
 function loadState(): TabsState | null {
   try {
@@ -230,6 +242,9 @@ export function closeTab(id: string) {
 
   const [removed] = state.tabs.splice(index, 1)
   if (removed?.model) removed.model.dispose?.()
+  // Al cerrar un documento su historial deja de tener sentido: lo descartamos
+  // para no acumular versiones huérfanas en localStorage.
+  clearHistory(id)
 
   if (state.activeId === id) {
     const next = state.tabs[index] || state.tabs[index - 1]

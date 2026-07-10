@@ -1,19 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { computeLineDiff, parseAction, runAgent, type AgentBridge, type AgentRunResult, type AgentUI } from './agent'
-
-describe('computeLineDiff', () => {
-  it('counts added and removed lines', () => {
-    const diff = computeLineDiff('a\nb\nc', 'a\nB\nc\nd')
-    expect(diff.removed).toBe(1) // b
-    expect(diff.added).toBe(2) // B, d
-  })
-
-  it('reports no changes for identical code', () => {
-    const diff = computeLineDiff('a\nb', 'a\nb')
-    expect(diff.added).toBe(0)
-    expect(diff.removed).toBe(0)
-  })
-})
+import {
+  detectDeterministicIntent,
+  isEditIntent,
+  parseAction,
+  runAgent,
+  stripComments,
+  type AgentBridge,
+  type AgentRunResult,
+  type AgentUI,
+} from './agent'
 import type { ChatMessage } from '../chatbot'
 
 describe('parseAction', () => {
@@ -32,6 +27,16 @@ describe('parseAction', () => {
 
   it('parses a run action', () => {
     expect(parseAction('<action>run</action>').kind).toBe('run')
+  })
+
+  it('parses the deterministic strip-comments and format actions', () => {
+    expect(parseAction('<action>strip-comments</action>').kind).toBe('strip-comments')
+    expect(parseAction('<action>format</action>').kind).toBe('format')
+  })
+
+  it('flags whether the <action> tag was explicit', () => {
+    expect(parseAction('<action>final</action>\nhi').tagged).toBe(true)
+    expect(parseAction('just some prose, no tag').tagged).toBe(false)
   })
 
   it('parses a final action and keeps the message text', () => {
@@ -67,18 +72,24 @@ function makeHarness(initialCode = '') {
     language: () => 'javascript',
   }
 
+  bridge.format = async (code: string) => code.replace(/;+/g, ';').replace(/\s+$/gm, '')
+
+  const finals: string[] = []
   const ui: AgentUI = {
     edit: (info) => events.push(`edit:+${info.added}-${info.removed}`),
     run: () => {
       events.push('step:run')
       return { update: (_detail, s) => events.push(`update:${s ?? ''}`) }
     },
-    finalAnswer: (md) => events.push(`final:${md.slice(0, 20)}`),
+    finalAnswer: (md) => {
+      finals.push(md)
+      events.push(`final:${md.slice(0, 20)}`)
+    },
     status: () => {},
     clearStatus: () => {},
   }
 
-  return { state, events, bridge, ui }
+  return { state, events, finals, bridge, ui }
 }
 
 describe('runAgent loop', () => {
@@ -127,5 +138,159 @@ describe('runAgent loop', () => {
     expect(events.filter((e) => e === 'step:run').length).toBe(3)
     // Aún así cierra con un mensaje final (no cuelga).
     expect(events.some((e) => e.startsWith('final:'))).toBe(true)
+  })
+
+  it('#1: does not trust a no-tag "done" on an edit request — nudges, then the agent acts', async () => {
+    const { state, events, bridge, ui } = makeHarness('const x = 1')
+    const scripted = [
+      // El modelo parlotea sin etiqueta y afirma que ya está hecho.
+      "It's already correct, nothing to change.",
+      // Tras el aviso estricto, edita de verdad.
+      '<action>write</action>\n```js\nconst x = 2\n```',
+      '<action>final</action>\nArreglado.',
+    ]
+    let turn = 0
+    const generate = async () => scripted[turn++]
+
+    await runAgent('arregla el bug del codigo', { generate, bridge, ui, maxSteps: 6 })
+
+    expect(events).toContain('setCode')
+    expect(state.code).toBe('const x = 2')
+    expect(events.some((e) => e.startsWith('final:'))).toBe(true)
+  })
+
+  it('#2: if an edit request ends with no edit at all, it says so honestly instead of faking success', async () => {
+    const { events, finals, bridge, ui } = makeHarness('const x = 1')
+    // El modelo insiste en que está hecho sin editar nunca.
+    const generate = async () => 'Done, it already works.'
+
+    await runAgent('arregla el bug del codigo', { generate, bridge, ui, maxSteps: 6 })
+
+    expect(events).not.toContain('setCode')
+    expect(finals.at(-1)).toMatch(/didn't change the code/i)
+  })
+
+  it('fast-path: "quita los comentarios" strips them without ever calling the model', async () => {
+    const { state, events, bridge, ui } = makeHarness("// top\nconst u = 'http://x' // trailing\nconst y = 2")
+    let called = 0
+    const generate = async () => {
+      called++
+      return '<action>final</action>\nnope'
+    }
+
+    await runAgent('quita los comentarios del codigo', { generate, bridge, ui })
+
+    expect(called).toBe(0) // el modelo no interviene
+    expect(events).toContain('setCode')
+    expect(state.code).not.toMatch(/\/\/ top|\/\/ trailing/)
+    expect(state.code).toContain("'http://x'")
+  })
+
+  it('fast-path: reports honestly when there are no comments to remove', async () => {
+    const { events, finals, bridge, ui } = makeHarness('const x = 1')
+    const generate = async () => '<action>final</action>\nnope'
+
+    await runAgent('quita los comentarios', { generate, bridge, ui })
+
+    expect(events).not.toContain('setCode')
+    expect(finals.at(-1)).toMatch(/no comments to remove/i)
+  })
+
+  it('fast-path: does NOT trigger when the request mixes other work (falls through to the model)', async () => {
+    const { state, events, bridge, ui } = makeHarness('// c\nconst x = 1')
+    const scripted = ['<action>write</action>\n```js\nconst x = 1\nfunction f() {}\n```', '<action>final</action>\nHecho.']
+    let turn = 0
+    const generate = async () => scripted[turn++]
+
+    await runAgent('quita los comentarios y añade una función', { generate, bridge, ui, maxSteps: 4 })
+
+    // Pasó por el modelo (aplicó su write), no por el fast-path determinista.
+    expect(events).toContain('setCode')
+    expect(state.code).toContain('function f()')
+  })
+
+  it('#3: strip-comments verb is executed deterministically by the harness', async () => {
+    const { state, events, bridge, ui } = makeHarness("// top\nconst u = 'http://x' // trailing\nconst y = 2")
+    const scripted = ['<action>strip-comments</action>', '<action>final</action>\nHecho.']
+    let turn = 0
+    const generate = async () => scripted[turn++]
+
+    await runAgent('quita los comentarios', { generate, bridge, ui, maxSteps: 4 })
+
+    expect(events).toContain('setCode')
+    expect(state.code).not.toMatch(/\/\/ top|\/\/ trailing/)
+    // No debe romper el string que contiene "//".
+    expect(state.code).toContain("'http://x'")
+  })
+
+  it('#3: format verb runs the harness formatter', async () => {
+    const { state, events, bridge, ui } = makeHarness('const x = 1;;;   ')
+    const scripted = ['<action>format</action>', '<action>final</action>\nFormateado.']
+    let turn = 0
+    const generate = async () => scripted[turn++]
+
+    await runAgent('formatea el codigo', { generate, bridge, ui, maxSteps: 4 })
+
+    expect(events).toContain('setCode')
+    expect(state.code).toBe('const x = 1;')
+  })
+})
+
+describe('stripComments', () => {
+  it('removes line and block comments but keeps code', () => {
+    const src = "// Bienvenido a XJS!\nconsole.log('hi'); // inline\n/* block\n comment */\nconst x = 2"
+    const out = stripComments(src)
+    expect(out).not.toMatch(/Bienvenido|inline|block|comment/)
+    expect(out).toContain("console.log('hi');")
+    expect(out).toContain('const x = 2')
+  })
+
+  it('does not touch // or /* */ inside strings, templates or regex', () => {
+    const src = "const u = 'http://x'\nconst t = `a // b`\nconst r = /a\\/b/\nconst d = \"/* not a comment */\""
+    const out = stripComments(src)
+    expect(out).toContain("'http://x'")
+    expect(out).toContain('`a // b`')
+    expect(out).toContain('/a\\/b/')
+    expect(out).toContain('"/* not a comment */"')
+  })
+
+  it('returns identical code when there are no comments', () => {
+    const src = "console.log('no comments here')\nconst x = 1"
+    expect(stripComments(src)).toBe(src)
+  })
+})
+
+describe('isEditIntent', () => {
+  it('detects imperative edit requests (ES + EN)', () => {
+    for (const m of ['quita los comentarios', 'elimina esto', 'arregla el error', 'fix the bug', 'format the code', 'refactoriza']) {
+      expect(isEditIntent(m)).toBe(true)
+    }
+  })
+
+  it('does not flag plain questions', () => {
+    for (const m of ['why does it print 1?', '¿qué hace este código?', 'explain this loop']) {
+      expect(isEditIntent(m)).toBe(false)
+    }
+  })
+})
+
+describe('detectDeterministicIntent', () => {
+  it('detects pure comment-removal requests', () => {
+    for (const m of ['quita los comentarios', 'elimina los comentarios del codigo', 'remove all comments', 'código sin comentarios']) {
+      expect(detectDeterministicIntent(m)).toBe('strip-comments')
+    }
+  })
+
+  it('detects pure format requests', () => {
+    for (const m of ['formatea el codigo', 'format this', 'prettify the file']) {
+      expect(detectDeterministicIntent(m)).toBe('format')
+    }
+  })
+
+  it('returns null when the request mixes extra work or is a question', () => {
+    expect(detectDeterministicIntent('quita los comentarios y añade tipos')).toBeNull()
+    expect(detectDeterministicIntent('refactoriza y formatea')).toBeNull()
+    expect(detectDeterministicIntent('¿por qué hay tantos comentarios?')).toBeNull()
+    expect(detectDeterministicIntent('arregla el bug')).toBeNull()
   })
 })
