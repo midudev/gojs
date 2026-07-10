@@ -12,7 +12,12 @@ import {
   isChromePromptApiModelId,
   resolveAutoModelId,
 } from './ai-models'
-import { INITIAL_CODE, SHOWCASE_CODE, SHOWCASE_TYPING_BLOCKS } from './consts'
+import {
+  INITIAL_CODE,
+  SHOWCASE_CODE,
+  SHOWCASE_INITIAL_CODE,
+  SHOWCASE_TYPING_BLOCKS,
+} from './consts'
 import {
   AVAILABLE_THEMES,
   loadSettings,
@@ -1354,7 +1359,7 @@ async function initEditor() {
   // cargue tipos de los imports. El modelo por defecto de `create({ value })` usa una
   // URI sin extensión que el LSP no reconoce (los modelos de las pestañas ya son `.ts`).
   const initialModel = monaco.editor.createModel(
-    isShowcaseEmbed ? SHOWCASE_CODE : INITIAL_CODE,
+    isShowcaseEmbed ? SHOWCASE_INITIAL_CODE : INITIAL_CODE,
     'typescript',
     monaco.Uri.parse('inmemory://models/__initial.ts'),
   )
@@ -3591,12 +3596,6 @@ async function initShowcaseTyping(): Promise<void> {
   const wait = (duration: number) =>
     new Promise<void>((resolve) => window.setTimeout(resolve, duration))
 
-  await wait(900)
-  if (cancelled) {
-    cleanup()
-    return
-  }
-
   const model = editor.getModel()
   if (!model) {
     cleanup()
@@ -3606,12 +3605,18 @@ async function initShowcaseTyping(): Promise<void> {
   applyShowcaseEdit([
     {
       range: model.getFullModelRange(),
-      text: '',
+      text: SHOWCASE_INITIAL_CODE,
       forceMoveMarkers: true,
     },
   ])
-  editor.setPosition({ lineNumber: 1, column: 1 })
-  runCode()
+  editor.setPosition(model.getPositionAt(model.getValueLength()))
+  await runCode()
+
+  await wait(450)
+  if (cancelled) {
+    cleanup()
+    return
+  }
 
   for (const block of SHOWCASE_TYPING_BLOCKS) {
     for (const character of block) {
@@ -3630,12 +3635,16 @@ async function initShowcaseTyping(): Promise<void> {
         },
       ])
       editor.setPosition(model.getPositionAt(model.getValueLength()))
-      await wait(character === '\n' ? 70 : 28)
+      await wait(character === '\n' ? 35 : 16)
     }
 
     // Execute at each valid checkpoint so the output visibly advances with the demo.
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer)
+      debounceTimer = null
+    }
     await runCode()
-    await wait(currentSettings.debounceDelay + 350)
+    await wait(550)
   }
 
   cleanup()

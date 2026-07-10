@@ -1,4 +1,4 @@
-import { INITIAL_CODE, SHOWCASE_CODE } from './consts'
+import { INITIAL_CODE, SHOWCASE_CODE, SHOWCASE_INITIAL_CODE } from './consts'
 import { clearHistory } from './history'
 
 type MonacoLike = any
@@ -97,9 +97,12 @@ function createModelForTab(t: Tab) {
 
 function ensureAtLeastOneTab() {
   if (state.tabs.length === 0) {
+    const showcaseCode = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ? SHOWCASE_CODE
+      : SHOWCASE_INITIAL_CODE
     const tab: Tab = {
       id: generateId(),
-      content: EMBED_MODE === 'showcase' ? SHOWCASE_CODE : INITIAL_CODE,
+      content: EMBED_MODE === 'showcase' ? showcaseCode : INITIAL_CODE,
       isDirty: false,
       createdAt: Date.now(),
       updatedAt: Date.now(),
