@@ -128,7 +128,7 @@ export function getChatModelDisplayName(modelOrId: ModelRecord | string): string
   const modelId = typeof modelOrId === 'string' ? modelOrId : modelOrId.model_id
 
   if (isChromePromptApiModelId(modelId)) {
-    return 'Chrome system model'
+    return 'Gemini'
   }
 
   const parsedModelId = parseChatModelId(modelId)

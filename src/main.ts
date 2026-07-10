@@ -541,6 +541,19 @@ function webModelVisualHtml(model: (typeof AVAILABLE_CHAT_MODELS)[number]): stri
   )
 }
 
+// El modelo del sistema (Chrome Prompt API) es Gemini Nano: viene integrado en el
+// navegador, no ocupa descarga propia (0 GB) y, si lo detectamos, ya está listo.
+const PROMPT_API_REASONING_LEVEL = 4
+
+function webPromptApiVisualHtml(): string {
+  const reasoningLabel = `Reasoning level ${PROMPT_API_REASONING_LEVEL} of 4`
+  return (
+    `<span class="chatbot-model-tier">Gemini</span>` +
+    `<span class="chatbot-iq" role="img" aria-label="${reasoningLabel}" title="${reasoningLabel}">${intelligenceDotsHtml(PROMPT_API_REASONING_LEVEL, 4)}</span>` +
+    `<span class="chatbot-model-size">0 GB</span>`
+  )
+}
+
 // Resuelve la elección del usuario (que puede ser "auto") a un modelo concreto.
 function resolveModelChoice(choice: string): string {
   if (isTauri()) return resolveNativeChoice(choice)
@@ -553,7 +566,7 @@ function resolveModelChoice(choice: string): string {
 // Etiqueta corta para el selector del composer (estilo Cursor).
 function getModelChoiceShortLabel(choice: string): string {
   if (isAutoModelId(choice)) return 'Auto'
-  if (isChromePromptApiModelId(choice)) return 'System'
+  if (isChromePromptApiModelId(choice)) return 'Gemini'
   const record = getChatModelRecord(choice)
   return record ? getChatModelDisplayName(record) : 'Auto'
 }
@@ -738,6 +751,13 @@ function updateComposerModelLabel() {
   }
 
   label.classList.remove('chatbot-model-label--native', 'chatbot-model-label--visual')
+
+  if (isChromePromptApiModelId(userModelChoice) && chromePromptApiModelAvailable) {
+    label.classList.add('chatbot-model-label--visual')
+    label.innerHTML = webPromptApiVisualHtml()
+    return
+  }
+
   if (!isAutoModelId(userModelChoice) && !isChromePromptApiModelId(userModelChoice)) {
     const model = getChatModelRecord(userModelChoice)
     if (model) {
@@ -807,9 +827,6 @@ function setupComposerModelSelector() {
         name: 'Auto',
         meta: 'Best fit for this device',
       },
-      ...(chromePromptApiModelAvailable
-        ? [{ id: CHROME_PROMPT_API_MODEL_ID, name: 'System', meta: 'Built in · no download' }]
-        : []),
     ]
 
     const automaticOptionsHtml = automaticOptions
@@ -824,6 +841,17 @@ function setupComposerModelSelector() {
       )
       .join('')
 
+    // Gemini (Prompt API) encabeza la lista visual: es el más rápido de tener
+    // listo (0 GB, integrado) y solo aparece cuando lo detectamos disponible, en
+    // cuyo caso ya está listo, así que siempre lleva la marca de descargado.
+    const promptApiOptionHtml = chromePromptApiModelAvailable
+      ? `
+      <button type="button" class="chatbot-model-option chatbot-model-option--visual${userModelChoice === CHROME_PROMPT_API_MODEL_ID ? ' selected' : ''}" data-model-id="${escapeHtml(CHROME_PROMPT_API_MODEL_ID)}" role="option" title="Gemini · 0 GB · Built in">
+        ${webPromptApiVisualHtml()}
+        ${downloadedModelIconHtml()}
+      </button>`
+      : ''
+
     const downloadableOptionsHtml = AVAILABLE_CHAT_MODELS.map((model) => {
       const selected = model.model_id === userModelChoice
       const presentation = getChatModelPresentation(model)
@@ -836,7 +864,7 @@ function setupComposerModelSelector() {
       </button>`
     }).join('')
 
-    menu.innerHTML = `${automaticOptionsHtml}<div class="chatbot-model-divider" role="separator"></div>${downloadableOptionsHtml}`
+    menu.innerHTML = `${automaticOptionsHtml}<div class="chatbot-model-divider" role="separator"></div>${promptApiOptionHtml}${downloadableOptionsHtml}`
   }
 
   const updateWebInstalledState = (installedModels: ReadonlySet<string>) => {
@@ -4794,6 +4822,7 @@ async function initChatbot() {
       chatbotMessages?.appendChild(assistantMessageDiv)
 
       const reactRoot = createRoot(contentDiv)
+      chatResponseRoots.add(reactRoot)
       reactRoot.render(
         React.createElement(ChatResponse, {
           content: markdown,
