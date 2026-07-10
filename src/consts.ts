@@ -60,3 +60,24 @@ console.count('clicks');
 console.count('clicks');
 console.count(); // uses 'default' as the label
 `
+
+export const SHOWCASE_TYPING_BLOCKS = [
+  `// GoJS runs your code as you type.
+const prices = [12, 19, 8];`,
+  `
+
+prices.map(price => price * 1.21);`,
+  `
+Math.max(...prices);`,
+  `
+
+const cart = {
+  items: prices.length,
+  total: prices.reduce((sum, price) => sum + price, 0)
+};`,
+  `
+
+cart;`,
+] as const
+
+export const SHOWCASE_CODE = SHOWCASE_TYPING_BLOCKS.join('')
