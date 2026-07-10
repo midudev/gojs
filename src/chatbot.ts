@@ -216,6 +216,11 @@ class Chatbot {
   private onStateChange: ((state: ChatbotState) => void) | null = null
   private conversationHistory: ChatMessage[] = []
   private loadToken = 0
+  // Carga en curso, para que dos llamadas concurrentes al mismo modelo (p. ej. la
+  // precarga en segundo plano y el envío del usuario) compartan la misma promesa
+  // en lugar de que la segunda retorne un estado transitorio "no listo".
+  private inFlightLoad: Promise<void> | null = null
+  private inFlightLoadKey: string | null = null
 
   // On the desktop (Tauri) the webview has no WebGPU, so WebLLM cannot run.
   // Instead we route inference through a native llama.cpp server managed by the
@@ -368,6 +373,31 @@ class Chatbot {
   }
 
   public async loadModel(modelId?: string, forceReload = false): Promise<void> {
+    // Clave efectiva del modelo (nativo usa ids de llama.cpp sin normalizar).
+    const loadKey = this.native ? modelId ?? '' : this.normalizeModelId(modelId)
+
+    // Si ya hay una carga en curso para el mismo modelo, reutilizamos su promesa:
+    // quien llame esperará al resultado real (listo o error) en vez de leer un
+    // estado intermedio y creer erróneamente que la carga ha fallado.
+    if (!forceReload && this.inFlightLoad && this.inFlightLoadKey === loadKey) {
+      return this.inFlightLoad
+    }
+
+    const load = this.performLoad(modelId, forceReload)
+    this.inFlightLoad = load
+    this.inFlightLoadKey = loadKey
+
+    try {
+      await load
+    } finally {
+      if (this.inFlightLoad === load) {
+        this.inFlightLoad = null
+        this.inFlightLoadKey = null
+      }
+    }
+  }
+
+  private async performLoad(modelId?: string, forceReload = false): Promise<void> {
     // En nativo NO normalizamos: los ids son de llama.cpp (p. ej. "qwen2.5-coder-1.5b"),
     // no de WebLLM, y normalizeModelId los descartaría al default de WebLLM.
     if (this.native) {
