@@ -1,50 +1,50 @@
-// Código de ejemplo inicial
-export const INITIAL_CODE = `// Bienvenido a XJS! ⚡
-console.log('¡Hola desde XJS!');
-console.info('XJS está listo para usar');
+// Initial example code
+export const INITIAL_CODE = `// Welcome to GoJS! ⚡
+console.log('Hello from GoJS!');
+console.info('GoJS is ready');
 
-// Las expresiones se evalúan automáticamente
+// Expressions are evaluated automatically
 2 + 2;
 10 * 5;
 Math.sqrt(16);
-'Hola' + ' ' + 'Mundo';
+'Hello' + ' ' + 'World';
 
-// Prueba con diferentes tipos de datos
+// Try different data types
 const numbers = [1, 2, 3, 4, 5];
-console.log('Números:', numbers);
+console.log('Numbers:', numbers);
 
-console.time('procesamiento');
+console.time('processing');
 
 const result = numbers
   .map(n => n * 2)
   .filter(n => n > 5);
 
-console.timeEnd('procesamiento');
-console.log('Resultado:', result);
+console.timeEnd('processing');
+console.log('Result:', result);
 
-// Advertencias y errores
-console.warn('Esto es una advertencia de ejemplo');
+// Warnings and errors
+console.warn('This is an example warning');
 
 try {
-  throw new Error('Esto es un error de ejemplo');
+  throw new Error('This is an example error');
 } catch (error) {
-  console.error('Error capturado:', error.message);
+  console.error('Caught error:', error.message);
 }
 
 fetch('https://jsonplaceholder.typicode.com/todos/1')
   .then(response => response.json())
   .then(json => console.log(json))
 
-// Funciona con objetos
+// Works with objects
 const user = {
   name: 'XJS User',
   age: 25,
   skills: ['JavaScript', 'TypeScript', 'React']
 };
 
-console.log('Usuario:', user);
+console.log('User:', user);
 
-// console.table para visualizar datos
+// Use console.table to visualize data
 const employees = [
   { name: 'Alice', role: 'Developer', age: 28 },
   { name: 'Bob', role: 'Designer', age: 32 },
@@ -54,9 +54,9 @@ const employees = [
 console.table(employees);
 console.table(employees, ['name', 'role']);
 
-// console.count para contar ejecuciones
+// Use console.count to count executions
 console.count('clicks');
 console.count('clicks');
 console.count('clicks');
-console.count(); // usa 'default' como label
+console.count(); // uses 'default' as the label
 `

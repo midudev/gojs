@@ -77,7 +77,7 @@ export interface EditorSettings {
 }
 
 export const DEFAULT_SETTINGS: EditorSettings = {
-  theme: 'vitesse-dark',
+  theme: 'dracula',
   fontSize: 14,
   fontFamily: 'JetBrains Mono',
   aiEnabled: true,

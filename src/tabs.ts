@@ -19,8 +19,9 @@ type TabsState = {
   activeId: string | null
 }
 
-const STORAGE_TABS = 'xjs.tabs'
-const STORAGE_ACTIVE = 'xjs.activeTabId'
+const IS_LANDING_EMBED = new URLSearchParams(window.location.search).get('embed') === 'landing'
+const STORAGE_TABS = IS_LANDING_EMBED ? 'xjs.tabs.landing-demo.v1' : 'xjs.tabs'
+const STORAGE_ACTIVE = IS_LANDING_EMBED ? 'xjs.activeTabId.landing-demo.v1' : 'xjs.activeTabId'
 
 export let state: TabsState = { tabs: [], activeId: null }
 let editor: EditorLike | null = null
@@ -129,7 +130,7 @@ function render() {
 
     const closeEl = document.createElement('button')
     closeEl.className = 'tab-close'
-    closeEl.setAttribute('aria-label', 'Cerrar pestaña')
+    closeEl.setAttribute('aria-label', 'Close tab')
     closeEl.innerHTML = `
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-x">
         <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
@@ -160,7 +161,7 @@ function render() {
   const addBtn = document.createElement('button')
   addBtn.className = 'tab-add'
   addBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-plus"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 5l0 14" /><path d="M5 12l14 0" /></svg>`
-  addBtn.title = 'Nueva pestaña (Ctrl/Cmd+T)'
+  addBtn.title = 'New tab (Ctrl/Cmd+T)'
   addBtn.addEventListener('click', () => newTab())
 
   container.appendChild(list)
@@ -175,7 +176,7 @@ function startEditingTabName(tab: Tab, nameEl: HTMLSpanElement) {
   input.type = 'text'
   input.className = 'tab-name-input'
   input.value = tab.name || ''
-  input.placeholder = 'Nombre de la pestaña'
+  input.placeholder = 'Tab name'
 
   // Reemplazar el span con el input
   nameEl.style.display = 'none'
@@ -357,7 +358,7 @@ export function initTabs(editorInstance: EditorLike, monacoInstance: MonacoLike,
   if (editor && monaco) {
     editor.addAction({
       id: 'tabs-new',
-      label: 'Nueva pestaña',
+      label: 'New tab',
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyT],
       run: () => {
         newTab()
@@ -366,7 +367,7 @@ export function initTabs(editorInstance: EditorLike, monacoInstance: MonacoLike,
 
     editor.addAction({
       id: 'tabs-close',
-      label: 'Cerrar pestaña',
+      label: 'Close tab',
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW],
       run: () => {
         if (state.activeId) closeTab(state.activeId)

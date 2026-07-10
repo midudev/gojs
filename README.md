@@ -1,85 +1,85 @@
 # GoJS ⚡
 
-Una alternativa moderna a RunJS - un playground interactivo de JavaScript/TypeScript.
+A fast, interactive JavaScript and TypeScript playground built for instant experimentation.
 
-## 🚀 Características
+## 🚀 Features
 
-- ✨ **Editor Monaco moderno** - Powered by `modern-monaco` con syntax highlighting
-- 🎯 **Ejecución en tiempo real** - Ejecuta JavaScript/TypeScript automáticamente mientras escribes
-- ⚡ **Auto-ejecución inteligente** - Debounce de 800ms para no saturar, se puede activar/desactivar
-- 📝 **Validación TypeScript** - JavaScript con validación de tipos (checkJs activado)
-- 🎨 **Interfaz moderna** - UI limpia y responsive con tema oscuro
-- ⌨️ **Atajos de teclado** - `Cmd+Enter` / `Ctrl+Enter` para ejecutar, `Cmd+Shift+F` para formatear
-- 📊 **Consola avanzada** - Soporte completo para log, info, warn, error, console.time/timeEnd, console.table y console.count
-- 🔍 **Navegación inteligente** - Hover sobre logs para destacar líneas, click para ir al código
-- 📍 **Números de línea** - Cada log muestra la línea exacta que lo generó
-- ⏱️ **Medición de tiempo** - console.time/timeEnd con visualización especial
-- 🔄 **Panel redimensionable** - Ajusta el tamaño del editor y consola
-- 🔧 **Formateo automático** - Formateo al pegar y al escribir
-- 🟢 **Runtime Node.js nativo (desktop)** - Ejecuta tu código contra un **Node.js 26 real** embebido en la app, con `npm install` nativo y acceso a la stdlib completa y módulos nativos
+- ✨ **Modern Monaco editor** - Powered by `modern-monaco` with syntax highlighting
+- 🎯 **Real-time execution** - Automatically runs JavaScript/TypeScript as you type
+- ⚡ **Smart auto-run** - Uses an 800ms debounce to prevent excessive executions and can be enabled or disabled
+- 📝 **TypeScript validation** - JavaScript type checking with `checkJs` enabled
+- 🎨 **Modern interface** - Clean, responsive UI with a dark theme
+- ⌨️ **Keyboard shortcuts** - `Cmd+Enter` / `Ctrl+Enter` to run and `Cmd+Shift+F` to format
+- 📊 **Advanced console** - Full support for log, info, warn, error, `console.time()`/`console.timeEnd()`, `console.table()`, and `console.count()`
+- 🔍 **Smart navigation** - Hover over logs to highlight lines and click to jump to the code
+- 📍 **Line numbers** - Each log shows the exact line that generated it
+- ⏱️ **Time measurement** - Special display for `console.time()`/`console.timeEnd()`
+- 🔄 **Resizable panel** - Adjust the size of the editor and console
+- 🔧 **Automatic formatting** - Formats code while typing and when pasting
+- 🟢 **Native Node.js runtime (desktop)** - Runs your code against a **real Node.js 26 runtime** embedded in the app, with native `npm install`, full standard library access, and native module support
 
-## 🖥️ App de escritorio y runtime nativo de Node.js
+## 🖥️ Desktop app and native Node.js runtime
 
-En la versión de escritorio (Tauri) GoJS puede ejecutar tu código de dos formas, conmutables desde el botón de runtime del header o en **Settings → Runtime**:
+In the desktop version (Tauri), GoJS can run your code in two ways. Switch between them using the runtime button in the header or under **Settings → Runtime**:
 
-- **Browser sandbox** (por defecto): Web Worker aislado, funciona en cualquier lugar.
-- **Node.js (native)**: lanza un proceso **Node.js 26** embebido. El código se ejecuta como en un proyecto Node real, por lo que puedes `import` paquetes de npm, usar el sistema de ficheros, etc.
+- **Browser sandbox** (default): An isolated Web Worker that works anywhere.
+- **Node.js (native)**: Launches an embedded **Node.js 26** process. Code runs as it would in a real Node.js project, so you can `import` npm packages, use the file system, and more.
 
-Las dependencias se gestionan desde **Settings → Runtime → Dependencies**: instalar, actualizar y eliminar paquetes con `npm` nativo. Viven en un _workspace_ por usuario (`<app_data>/workspace`), así que tu código las importa como en cualquier proyecto Node.
+Dependencies are managed under **Settings → Runtime → Dependencies**, where you can install, update, and remove packages using native `npm`. They live in a per-user workspace (`<app_data>/workspace`), so your code can import them just like in any Node.js project.
 
-### Compilar el escritorio
+### Building the desktop app
 
-El runtime de Node se descarga y empaqueta como recurso de Tauri:
+The Node.js runtime is downloaded and bundled as a Tauri resource:
 
 ```bash
-# Descarga Node 26 para tu plataforma dentro de src-tauri/runtime (una vez)
+# Download Node.js 26 for your platform into src-tauri/runtime (once)
 pnpm node:fetch
 
-# Desarrollo (si no hay Node embebido, usa el `node` del PATH como fallback)
+# Development (falls back to `node` from PATH if no runtime is embedded)
 pnpm desktop:dev
 
-# Build de producción (ejecuta node:fetch automáticamente)
+# Production build (runs node:fetch automatically)
 pnpm desktop:build
 ```
 
-> El binario de Node (~60-90 MB) está ignorado por git; `pnpm node:fetch` lo regenera. Puedes fijar una versión con `NODE_VERSION=vXX.Y.Z pnpm node:fetch`.
+> The Node.js binary (~60–90 MB) is ignored by Git; `pnpm node:fetch` regenerates it. You can pin a version with `NODE_VERSION=vXX.Y.Z pnpm node:fetch`.
 
-## 🛠️ Tecnologías
+## 🛠️ Technologies
 
-- [Vite](https://vitejs.dev/) - Build tool ultrarrápido
-- [modern-monaco](https://github.com/esm-dev/modern-monaco) - Editor Monaco moderno
-- TypeScript - Tipado estático
-- CSS moderno - Variables CSS y diseño flexible
+- [Vite](https://vitejs.dev/) - Blazing-fast build tool
+- [modern-monaco](https://github.com/esm-dev/modern-monaco) - Modern Monaco editor
+- TypeScript - Static typing
+- Modern CSS - CSS variables and flexible layouts
 
-## 📦 Instalación
+## 📦 Installation
 
 ```bash
-# Instalar dependencias
+# Install dependencies
 pnpm install
 
-# Ejecutar en desarrollo
+# Run in development
 pnpm dev
 
-# Construir para producción
+# Build for production
 pnpm build
 
-# Preview del build
+# Preview the production build
 pnpm preview
 ```
 
-## 🎮 Uso
+## 🎮 Usage
 
-1. Escribe tu código JavaScript o TypeScript en el editor
-2. El código se ejecuta automáticamente mientras escribes (debounce de 800ms)
-3. También puedes presionar `Cmd+Enter` (Mac) / `Ctrl+Enter` (Windows) para ejecutar manualmente
-4. Ve los resultados en tiempo real en la consola
-5. Desactiva "Auto-ejecutar" si prefieres ejecución manual
-6. **Hover sobre un log** para destacar la línea en el editor
-7. **Click sobre un log** para ir directamente a esa línea y hacer focus
-8. Usa `console.time()` y `console.timeEnd()` para medir tiempos de ejecución
-9. Usa `console.table()` para visualizar arrays y objetos en formato tabla elegante
-10. Usa `console.count()` para contar cuántas veces se ejecuta una línea con un label específico
+1. Write JavaScript or TypeScript code in the editor
+2. Your code runs automatically as you type with an 800ms debounce
+3. You can also press `Cmd+Enter` (macOS) / `Ctrl+Enter` (Windows) to run it manually
+4. View the results in real time in the console
+5. Disable "Auto-run" if you prefer manual execution
+6. **Hover over a log** to highlight its line in the editor
+7. **Click a log** to jump directly to its line and focus the editor
+8. Use `console.time()` and `console.timeEnd()` to measure execution time
+9. Use `console.table()` to display arrays and objects in a clean table
+10. Use `console.count()` to count how many times a line runs with a specific label
 
-## 📄 Licencia
+## 📄 License
 
 MIT
