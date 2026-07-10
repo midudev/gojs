@@ -1,6 +1,3 @@
-import './style.css'
-import './fonts.css'
-
 import { init } from 'modern-monaco'
 import {
   AUTO_MODEL_ID,
@@ -15,7 +12,7 @@ import {
   isChromePromptApiModelId,
   resolveAutoModelId,
 } from './ai-models'
-import { INITIAL_CODE } from './consts'
+import { INITIAL_CODE, SHOWCASE_CODE, SHOWCASE_TYPING_BLOCKS } from './consts'
 import {
   AVAILABLE_THEMES,
   loadSettings,
@@ -365,7 +362,9 @@ let nativeRunSeq = 0
 // lleguen de un proceso anterior que aún se está muriendo.
 let latestNativeRunGen = 0
 
-const isLandingEmbed = new URLSearchParams(window.location.search).get('embed') === 'landing'
+const embedMode = new URLSearchParams(window.location.search).get('embed')
+const isLandingEmbed = embedMode === 'landing' || embedMode === 'showcase'
+const isShowcaseEmbed = embedMode === 'showcase'
 let currentSettings = loadSettings()
 
 if (isLandingEmbed) {
@@ -374,7 +373,16 @@ if (isLandingEmbed) {
     theme: 'dracula',
     fontFamily: 'Cascadia Code',
     layoutOrientation: 'horizontal',
+    aiEnabled: false,
+    lineNumbers: true,
+    lineTimings: true,
+    autoLogExpressions: true,
+    minimap: false,
   }
+}
+
+if (isShowcaseEmbed) {
+  document.documentElement.classList.add('showcase-embed')
 }
 let chromePromptApiModelAvailable = false
 let chromePromptApiAvailabilityChecked = false
@@ -1236,7 +1244,7 @@ function renderChatbotLoadingUI(
 // Reúne el código de todas las pestañas persistidas para sembrar el import map del LSP
 // en el arranque (así los imports ya presentes obtienen tipos sin recargar).
 function collectPersistedCode(): string {
-  const parts = [INITIAL_CODE]
+  const parts = [isShowcaseEmbed ? SHOWCASE_CODE : INITIAL_CODE]
   try {
     const raw = localStorage.getItem('xjs.tabs')
     if (raw) {
@@ -1346,7 +1354,7 @@ async function initEditor() {
   // cargue tipos de los imports. El modelo por defecto de `create({ value })` usa una
   // URI sin extensión que el LSP no reconoce (los modelos de las pestañas ya son `.ts`).
   const initialModel = monaco.editor.createModel(
-    INITIAL_CODE,
+    isShowcaseEmbed ? SHOWCASE_CODE : INITIAL_CODE,
     'typescript',
     monaco.Uri.parse('inmemory://models/__initial.ts'),
   )
@@ -3562,6 +3570,76 @@ function setupOutputInteractions(output: HTMLElement) {
   })
 }
 
+async function initShowcaseTyping(): Promise<void> {
+  if (!isShowcaseEmbed || !editor || !monaco) return
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+  let cancelled = false
+  let applyingShowcaseEdit = false
+  const changeDisposable = editor.onDidChangeModelContent(() => {
+    if (!applyingShowcaseEdit) cancelled = true
+  })
+  const cleanup = () => {
+    changeDisposable.dispose()
+  }
+  const applyShowcaseEdit = (edits: Array<Record<string, unknown>>) => {
+    applyingShowcaseEdit = true
+    editor.executeEdits('showcase-typing', edits)
+    applyingShowcaseEdit = false
+  }
+
+  const wait = (duration: number) =>
+    new Promise<void>((resolve) => window.setTimeout(resolve, duration))
+
+  await wait(900)
+  if (cancelled) {
+    cleanup()
+    return
+  }
+
+  const model = editor.getModel()
+  if (!model) {
+    cleanup()
+    return
+  }
+
+  applyShowcaseEdit([
+    {
+      range: model.getFullModelRange(),
+      text: '',
+      forceMoveMarkers: true,
+    },
+  ])
+  editor.setPosition({ lineNumber: 1, column: 1 })
+  runCode()
+
+  for (const block of SHOWCASE_TYPING_BLOCKS) {
+    for (const character of block) {
+      if (cancelled) {
+        cleanup()
+        return
+      }
+
+      const lineNumber = model.getLineCount()
+      const column = model.getLineMaxColumn(lineNumber)
+      applyShowcaseEdit([
+        {
+          range: new monaco.Range(lineNumber, column, lineNumber, column),
+          text: character,
+          forceMoveMarkers: true,
+        },
+      ])
+      editor.setPosition(model.getPositionAt(model.getValueLength()))
+      await wait(character === '\n' ? 70 : 28)
+    }
+
+    // Leave enough time for auto-run to refresh the output before continuing.
+    await wait(currentSettings.debounceDelay + 350)
+  }
+
+  cleanup()
+}
+
 // Inicializar aplicación
 async function start() {
   window.addEventListener('pagehide', teardownApp, { once: true })
@@ -3569,8 +3647,11 @@ async function start() {
   // Prettier se carga bajo demanda en la primera llamada a formatCode()
 
   await initEditor()
-  await refreshChromePromptApiModelAvailability()
-  enableChromePromptApiAssistantIfAvailable()
+  void initShowcaseTyping()
+  if (!isLandingEmbed) {
+    await refreshChromePromptApiModelAvailability()
+    enableChromePromptApiAssistantIfAvailable()
+  }
 
   // Event listener para el botón de cambio de layout
   const layoutToggleButton = $('#layout-toggle-button') as HTMLButtonElement | null
@@ -4255,7 +4336,7 @@ async function start() {
   // Configurar el runtime nativo de Node.js (solo tiene efecto en desktop)
   void setupNativeRuntimeUI()
 
-  if (currentSettings.aiEnabled) {
+  if (currentSettings.aiEnabled && !isLandingEmbed) {
     initChatbot()
   }
 
