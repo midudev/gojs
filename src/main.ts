@@ -3633,7 +3633,8 @@ async function initShowcaseTyping(): Promise<void> {
       await wait(character === '\n' ? 70 : 28)
     }
 
-    // Leave enough time for auto-run to refresh the output before continuing.
+    // Execute at each valid checkpoint so the output visibly advances with the demo.
+    await runCode()
     await wait(currentSettings.debounceDelay + 350)
   }
 
