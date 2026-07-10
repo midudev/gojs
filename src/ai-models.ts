@@ -1,11 +1,11 @@
-import { ModelType, prebuiltAppConfig, type AppConfig, type ModelRecord } from '@mlc-ai/web-llm'
+import type { AppConfig, ModelRecord } from '@mlc-ai/web-llm'
+import { WEBLLM_CHAT_MODEL_CANDIDATES } from './webllm-models.generated'
 
 export const DEFAULT_CHATBOT_MODEL_ID = 'Qwen3.5-0.8B-q4f16_1-MLC'
 export const CHROME_PROMPT_API_MODEL_ID = 'chrome-prompt-api'
 // Selección "Auto": dejamos que la app decida el mejor modelo disponible.
 export const AUTO_MODEL_ID = 'auto'
 
-const MODERN_CHAT_MODEL_PREFIXES = ['Qwen3.5-']
 const CHAT_MODEL_ID_PATTERN = /^(Qwen)(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?B)-(.+)-MLC$/
 
 type ParsedChatModelId = {
@@ -31,11 +31,8 @@ function getQuantizationRank(modelId: string): number {
 }
 
 export const AVAILABLE_CHAT_MODELS = (() => {
-  const candidates = prebuiltAppConfig.model_list.filter(
-    (model) =>
-      (model.model_type ?? ModelType.LLM) === ModelType.LLM &&
-      MODERN_CHAT_MODEL_PREFIXES.some((prefix) => model.model_id.startsWith(prefix)),
-  )
+  // El snapshot generado ya viene filtrado a modelos LLM de la familia de chat.
+  const candidates = WEBLLM_CHAT_MODEL_CANDIDATES
 
   // Nos quedamos con una única variante por nombre de modelo (p. ej. "Qwen 3.5 0.8B"),
   // eligiendo la cuantización preferida.
@@ -60,8 +57,9 @@ export const AVAILABLE_CHAT_MODELS = (() => {
   })
 })()
 
+// prebuiltAppConfig solo contenía `model_list` y `cacheBackend`, ambos
+// sobreescritos aquí, así que no necesitamos importar el runtime de web-llm.
 export const CHATBOT_APP_CONFIG = {
-  ...prebuiltAppConfig,
   model_list: AVAILABLE_CHAT_MODELS,
   cacheBackend: 'indexeddb',
 } satisfies AppConfig

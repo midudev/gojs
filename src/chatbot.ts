@@ -1,4 +1,4 @@
-import { CreateMLCEngine, MLCEngine, deleteModelAllInfoInCache } from '@mlc-ai/web-llm'
+import type { MLCEngine } from '@mlc-ai/web-llm'
 import {
   CHATBOT_APP_CONFIG,
   CHROME_PROMPT_API_MODEL_ID,
@@ -476,6 +476,9 @@ class Chatbot {
         this.engine.setInitProgressCallback(initProgressCallback)
         await this.engine.reload(targetModelId)
       } else {
+        // Cargar el runtime de WebLLM (pesado: motor + wasm) solo ahora, al crear
+        // de verdad un motor, en vez de en el arranque de la app.
+        const { CreateMLCEngine } = await import('@mlc-ai/web-llm')
         // Crear el motor con el modelo específico
         const engine = await CreateMLCEngine(targetModelId, {
           appConfig: CHATBOT_APP_CONFIG,
@@ -885,6 +888,7 @@ class Chatbot {
       this.engine = null
     }
 
+    const { deleteModelAllInfoInCache } = await import('@mlc-ai/web-llm')
     await deleteModelAllInfoInCache(targetModelId, CHATBOT_APP_CONFIG)
     setWebLlmModelInstallation(targetModelId, false)
 

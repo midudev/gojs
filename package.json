@@ -10,6 +10,7 @@
     "test:browser": "vitest --config=vitest.browser.config.ts",
     "tauri": "tauri",
     "types:node": "node scripts/gen-node-types.mjs",
+    "types:webllm": "node scripts/gen-webllm-models.mjs",
     "node:fetch": "node scripts/fetch-node.mjs",
     "desktop:dev": "tauri dev",
     "desktop:build": "pnpm node:fetch && tauri build"

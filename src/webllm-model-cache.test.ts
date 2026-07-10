@@ -13,7 +13,10 @@ function deleteDatabase(name: string): Promise<void> {
     const request = indexedDB.deleteDatabase(name)
     request.onsuccess = () => resolve()
     request.onerror = () => reject(request.error)
-    request.onblocked = () => reject(new Error(`Database ${name} is blocked`))
+    // `onblocked` no es un error: la eliminación queda pendiente y `onsuccess`
+    // se dispara en cuanto se cierra la conexión que la bloqueaba. Rechazar aquí
+    // provocaba fallos intermitentes en el teardown.
+    request.onblocked = () => {}
   })
 }
 
