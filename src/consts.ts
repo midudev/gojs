@@ -77,7 +77,7 @@ const cart = {
 };`,
   `
 
-cart;`,
+console.log('Cart:', cart);`,
 ] as const
 
 export const SHOWCASE_CODE = SHOWCASE_TYPING_BLOCKS.join('')
