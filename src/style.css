@@ -506,7 +506,7 @@ body {
 }
 
 .output-content:empty::before {
-  content: 'Ejecuta tu código para ver la salida aquí...';
+  content: 'Run your code to see the output here...';
   color: var(--color-text-secondary);
   font-style: italic;
 }
@@ -4064,4 +4064,39 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
 .log-entry {
   -webkit-user-select: text !important;
   user-select: text !important;
+}
+
+/* Dedicated landing showcase: keep the real editor and execution pipeline while
+   removing controls that distract from the inline-values demonstration. */
+.showcase-embed #ai-toggle-button,
+.showcase-embed #layout-toggle-button,
+.showcase-embed #runtime-toggle-button,
+.showcase-embed #issue-button,
+.showcase-embed #history-button,
+.showcase-embed #settings-button,
+.showcase-embed #chatbot-panel,
+.showcase-embed .add-tab-btn {
+  display: none !important;
+}
+
+.showcase-embed .header {
+  min-height: 40px;
+  height: 40px;
+}
+
+.showcase-embed .header-logo {
+  margin-inline: 2px 8px;
+}
+
+.showcase-embed .main-content {
+  height: calc(100vh - 40px);
+}
+
+.showcase-embed .tabs-container {
+  min-width: 0;
+}
+
+.showcase-embed .header-actions {
+  width: auto;
+  padding-right: 4px;
 }
