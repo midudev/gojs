@@ -1,47 +1,3 @@
-type Platform = 'macos' | 'windows' | 'linux' | 'unknown'
-
-const RELEASE_URL = 'https://github.com/midudev/gojs/releases/latest'
-
-const platformCopy: Record<Platform, { label: string; meta: string }> = {
-  macos: { label: 'Download for macOS', meta: 'No account · No license key · Apple Silicon and Intel' },
-  windows: { label: 'Download for Windows', meta: 'No account · No license key · Windows 10 and 11' },
-  linux: { label: 'Download for Linux', meta: 'No account · No license key · AppImage, deb, and rpm' },
-  unknown: {
-    label: 'Download for your system',
-    meta: 'No account · No license key · macOS, Windows, and Linux',
-  },
-}
-
-function detectPlatform(): Platform {
-  const platform = `${navigator.userAgent} ${navigator.platform}`.toLowerCase()
-  if (platform.includes('mac')) return 'macos'
-  if (platform.includes('win')) return 'windows'
-  if (platform.includes('linux')) return 'linux'
-  return 'unknown'
-}
-
-function setDownloadExperience(): void {
-  const copy = platformCopy[detectPlatform()]
-  const labels = [
-    document.querySelector<HTMLSpanElement>('#download-label'),
-    document.querySelector<HTMLSpanElement>('#download-label-bottom'),
-  ]
-  const links = [
-    document.querySelector<HTMLAnchorElement>('#download-cta'),
-    document.querySelector<HTMLAnchorElement>('#download-cta-bottom'),
-  ]
-
-  labels.forEach((label) => {
-    if (label) label.textContent = copy.label
-  })
-  links.forEach((link) => {
-    if (link) link.href = RELEASE_URL
-  })
-
-  const meta = document.querySelector<HTMLElement>('#download-meta')
-  if (meta) meta.textContent = copy.meta
-}
-
 function initHeader(): void {
   const header = document.querySelector<HTMLElement>('.site-header')
   if (!header) return
@@ -127,7 +83,6 @@ function initShowcase(): void {
   observer.observe(stage)
 }
 
-setDownloadExperience()
 initHeader()
 initReveals()
 initShowcase()
