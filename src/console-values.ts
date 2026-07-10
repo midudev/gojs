@@ -3,6 +3,12 @@ export type SerializedConsoleValue =
   | { __type: 'Set'; __values: any[] }
   | { __type: 'Map'; __entries: [any, any][] }
 
+export type SerializedConsoleArguments = { __type: 'Arguments'; __values: any[] }
+
+export function isSerializedConsoleArguments(value: any): value is SerializedConsoleArguments {
+  return value?.__type === 'Arguments' && Array.isArray(value.__values)
+}
+
 export function isSerializedConsoleValue(value: any): value is SerializedConsoleValue {
   if (!value || typeof value !== 'object' || typeof value.__type !== 'string') {
     return false
@@ -98,6 +104,11 @@ export function serializeConsoleValue(value: any, seen = new WeakSet<object>()):
   } finally {
     seen.delete(value)
   }
+}
+
+export function serializeConsoleArguments(args: any[]): any {
+  const values = args.map((value) => serializeConsoleValue(value))
+  return values.length === 1 ? values[0] : { __type: 'Arguments', __values: values }
 }
 
 export function formatConsoleValueText(value: any): string {

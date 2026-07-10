@@ -1,7 +1,7 @@
 // Web Worker para ejecutar código de usuario con timeout
 // Este worker ejecuta código en un hilo separado para evitar congelar la UI
 
-import { serializeConsoleValue } from './console-values'
+import { serializeConsoleArguments, serializeConsoleValue } from './console-values'
 
 interface ExecuteMessage {
   type: 'execute'
@@ -47,45 +47,40 @@ const customConsole = {
   log: (...args: any[]) => {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
-    // Serializar los argumentos para evitar errores de clonación
-    const serializedArgs = args.map((arg) => serializeConsoleValue(arg))
     const message: LogMessage = {
       type: 'log',
       lineNumber,
-      data: serializedArgs.length === 1 ? serializedArgs[0] : serializedArgs,
+      data: serializeConsoleArguments(args),
     }
     self.postMessage(message)
   },
   info: (...args: any[]) => {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
-    const serializedArgs = args.map((arg) => serializeConsoleValue(arg))
     const message: LogMessage = {
       type: 'info',
       lineNumber,
-      data: serializedArgs.length === 1 ? serializedArgs[0] : serializedArgs,
+      data: serializeConsoleArguments(args),
     }
     self.postMessage(message)
   },
   warn: (...args: any[]) => {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
-    const serializedArgs = args.map((arg) => serializeConsoleValue(arg))
     const message: LogMessage = {
       type: 'warn',
       lineNumber,
-      data: serializedArgs.length === 1 ? serializedArgs[0] : serializedArgs,
+      data: serializeConsoleArguments(args),
     }
     self.postMessage(message)
   },
   error: (...args: any[]) => {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
-    const serializedArgs = args.map((arg) => serializeConsoleValue(arg))
     const message: LogMessage = {
       type: 'error',
       lineNumber,
-      data: serializedArgs.length === 1 ? serializedArgs[0] : serializedArgs,
+      data: serializeConsoleArguments(args),
     }
     self.postMessage(message)
   },

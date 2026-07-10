@@ -138,6 +138,73 @@ export function collectBareSpecifiers(code: string): string[] {
   return [...found]
 }
 
+// Módulos nativos (core) de Node.js. No existen en el runtime de JavaScript del
+// navegador: al intentar importarlos (p. ej. `node:os`), WKWebView falla al
+// resolver el módulo y lo reporta como un error críptico de CORS. Los detectamos
+// antes de ejecutar para mostrar un mensaje claro y sugerir cambiar a Node.js.
+const NODE_BUILTINS = new Set([
+  'assert', 'async_hooks', 'buffer', 'child_process', 'cluster', 'console',
+  'constants', 'crypto', 'dgram', 'diagnostics_channel', 'dns', 'domain',
+  'events', 'fs', 'http', 'http2', 'https', 'inspector', 'module', 'net',
+  'os', 'path', 'perf_hooks', 'process', 'punycode', 'querystring', 'readline',
+  'repl', 'stream', 'string_decoder', 'sys', 'timers', 'tls', 'trace_events',
+  'tty', 'url', 'util', 'v8', 'vm', 'wasi', 'worker_threads', 'zlib',
+])
+
+/**
+ * ¿El specifier apunta a un módulo nativo de Node.js? Cualquier specifier con el
+ * prefijo `node:` cuenta (es la forma canónica y no tiene sentido en el navegador),
+ * así como los "bare specifiers" cuya raíz es un módulo core (`fs`, `os`, `fs/promises`…).
+ */
+export function isNodeBuiltinSpecifier(specifier: string): boolean {
+  const value = specifier.trim()
+  if (value.startsWith('node:')) return true
+  return NODE_BUILTINS.has(packageRootOf(value))
+}
+
+/**
+ * Extrae los imports de módulos nativos de Node.js presentes en el código
+ * (tanto `import ... from '...'` como `import('...')`). Devuelve los specifiers
+ * originales (p. ej. `node:os`, `fs/promises`) para poder mostrarlos al usuario.
+ */
+export function collectNodeBuiltinImports(code: string): string[] {
+  let ast: any
+  try {
+    ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' })
+  } catch {
+    return []
+  }
+
+  const found = new Set<string>()
+
+  const consider = (value: unknown) => {
+    if (typeof value === 'string' && isNodeBuiltinSpecifier(value)) found.add(value)
+  }
+
+  const walk = (node: any) => {
+    if (!node || typeof node.type !== 'string') return
+
+    if (node.type === 'ImportDeclaration' || node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') {
+      if (node.source) consider(node.source.value)
+    } else if (
+      node.type === 'ImportExpression' &&
+      node.source &&
+      node.source.type === 'Literal'
+    ) {
+      consider(node.source.value)
+    }
+
+    for (const key of Object.keys(node)) {
+      const child = (node as any)[key]
+      if (Array.isArray(child)) child.forEach(walk)
+      else if (child && typeof child.type === 'string') walk(child)
+    }
+  }
+
+  walk(ast)
+  return [...found]
+}
+
 /**
  * Construye un import map (formato WICG) que mapea cada paquete npm importado a su
  * URL en el CDN ESM, incluyendo la entrada con barra final para resolver subrutas.
@@ -301,9 +368,6 @@ export function detectExpressions(code: string): ExpressionInfo[] {
   return expressions
 }
 
-// Número de líneas que ocupa el bloque de inyección (ver plantilla en injectExpressionLogging)
-const INJECTION_TEMPLATE_LINES = 7
-
 /**
  * Inyecta código para capturar y mostrar expresiones en la consola
  * @param code El código JavaScript original
@@ -331,8 +395,9 @@ export function injectExpressionLogging(code: string, options: InjectExpressionL
 
   let modifiedCode = code
 
-  // Registrar cuántas líneas añade cada inyección y en qué línea original ocurre
-  const addedByLine: Array<{ line: number; added: number }> = []
+  // Registrar cada inyección: en qué línea original empieza la expresión, cuántas
+  // líneas añade y cuántas líneas del original abarca el span reemplazado.
+  const addedByLine: Array<{ line: number; added: number; spanLines: number }> = []
 
   for (const expr of expressions) {
     const exprCode = code.substring(expr.start, expr.end)
@@ -348,23 +413,54 @@ export function injectExpressionLogging(code: string, options: InjectExpressionL
       return __expr_result__;
     })();`
 
-    // Líneas netas añadidas = líneas de la inyección - líneas que ocupaba la expresión original
+    // La expresión puede ocupar varias líneas y se interpola dentro de la plantilla.
+    // Calcular el tamaño real evita asumir que la inyección siempre ocupa 7 líneas.
     const exprSpanLines = exprCode.split('\n').length
-    const added = INJECTION_TEMPLATE_LINES - exprSpanLines
-    addedByLine.push({ line: expr.line, added })
+    const added = injection.split('\n').length - exprSpanLines
+    addedByLine.push({ line: expr.line, added, spanLines: exprSpanLines })
 
     modifiedCode = modifiedCode.substring(0, expr.start) + injection + modifiedCode.substring(expr.end)
   }
 
+  // La plantilla de inyección coloca `;(function() {` en la misma línea donde
+  // empezaba la expresión, y la PRIMERA línea de la expresión se interpola en la
+  // línea siguiente (`const __expr_result__ = <expr>`). Por eso las líneas del
+  // span original quedan desplazadas una línea hacia abajo dentro de la IIFE.
+  const INJECTION_PREFIX_LINES = 1
+
+  // Líneas originales absorbidas por un span reemplazado (se mapean aparte, ya que
+  // no siguen el simple desfase `orig + shift` de las líneas exteriores).
+  const spanLines = new Set<number>()
+  for (const entry of addedByLine) {
+    for (let k = 0; k < entry.spanLines; k++) spanLines.add(entry.line + k)
+  }
+
   // Construir mapa: línea en código modificado -> línea original.
-  // Una línea original L se desplaza hacia abajo por todas las inyecciones anteriores a ella.
+  // Una línea original L (fuera de cualquier span) se desplaza hacia abajo por
+  // todas las inyecciones anteriores a ella.
   const originalLines = code.split('\n').length
   for (let orig = 1; orig <= originalLines; orig++) {
+    if (spanLines.has(orig)) continue // las líneas de spans se mapean debajo
     let shift = 0
     for (const entry of addedByLine) {
       if (entry.line < orig) shift += entry.added
     }
     lineMap.set(orig + shift, orig)
+  }
+
+  // Mapear cada línea interior del span a su posición real dentro de la IIFE, de
+  // forma que un log emitido en una línea intermedia de una expresión multilínea
+  // auto-instrumentada apunte a su línea original y no al código inyectado.
+  for (const entry of addedByLine) {
+    let shiftBefore = 0
+    for (const other of addedByLine) {
+      if (other.line < entry.line) shiftBefore += other.added
+    }
+    // Línea de `;(function() {` en el código modificado.
+    const base = entry.line + shiftBefore
+    for (let k = 0; k < entry.spanLines; k++) {
+      lineMap.set(base + INJECTION_PREFIX_LINES + k, entry.line + k)
+    }
   }
 
   return modifiedCode

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { formatConsoleValueText, serializeConsoleValue } from './console-values'
+import {
+  formatConsoleValueText,
+  isSerializedConsoleArguments,
+  serializeConsoleArguments,
+  serializeConsoleValue,
+} from './console-values'
 
 describe('console value serialization', () => {
   it('preserves Set contents for console.log rendering', () => {
@@ -20,5 +25,15 @@ describe('console value serialization', () => {
     circularSet.add(circularSet)
 
     expect(formatConsoleValueText(serializeConsoleValue(circularSet))).toBe('Set(1) { [Circular] }')
+  })
+
+  it('distinguishes multiple console arguments from a single array', () => {
+    const multiple = serializeConsoleArguments(['label', [1, 2]])
+    const singleArray = serializeConsoleArguments([[1, 2]])
+
+    expect(isSerializedConsoleArguments(multiple)).toBe(true)
+    expect(multiple).toEqual({ __type: 'Arguments', __values: ['label', [1, 2]] })
+    expect(isSerializedConsoleArguments(singleArray)).toBe(false)
+    expect(singleArray).toEqual([1, 2])
   })
 })
