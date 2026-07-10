@@ -1,4 +1,4 @@
-import { CreateMLCEngine, MLCEngine, deleteModelAllInfoInCache, hasModelInCache } from '@mlc-ai/web-llm'
+import { CreateMLCEngine, MLCEngine, deleteModelAllInfoInCache } from '@mlc-ai/web-llm'
 import {
   CHATBOT_APP_CONFIG,
   CHROME_PROMPT_API_MODEL_ID,
@@ -12,6 +12,21 @@ import {
   streamChromePromptApiResponse,
   type ChromePromptApiSession,
 } from './prompt-api'
+import { isTauri } from './native-runtime'
+import {
+  generateLlama,
+  getLlamaInfo,
+  onLlamaProgress,
+  prepareLlama,
+  stopLlama,
+  uninstallLlamaModel,
+  type LlamaProgress,
+} from './llama-runtime'
+import {
+  invalidateWebLlmModelInstallation,
+  isWebLlmModelInstalled,
+  setWebLlmModelInstallation,
+} from './webllm-model-cache'
 
 // Estado del chatbot
 export interface ChatMessage {
@@ -25,7 +40,16 @@ export interface ChatbotState {
   error: string | null
   loadProgress: number
   downloadSpeedBytesPerSecond: number | null
+  downloadedBytes?: number | null
+  downloadTotalBytes?: number | null
   currentModelId: string | null
+  /**
+   * Human-readable, step-by-step description of what the loader is doing right
+   * now (e.g. "Downloading llama.cpp runtime…", "Loading model into memory…").
+   * Only the native (desktop) backend fills this in; on the web it stays null and
+   * the UI falls back to a generic "Downloading model… X%" message.
+   */
+  loadStatusMessage?: string | null
 }
 
 const MEGABYTE_IN_BYTES = 1024 * 1024
@@ -97,6 +121,14 @@ async function deleteOriginPrivateFileSystem(): Promise<number> {
   }
 
   return deletedEntries
+}
+
+/** Compact human-readable byte size, e.g. 734003200 → "700 MB", 1610612736 → "1.5 GB". */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB'
+  const megabytes = bytes / MEGABYTE_IN_BYTES
+  if (megabytes >= 1024) return `${(megabytes / 1024).toFixed(1)} GB`
+  return `${megabytes < 10 ? megabytes.toFixed(1) : Math.round(megabytes)} MB`
 }
 
 function getFetchedBytesFromProgressText(text: string): number | null {
@@ -177,11 +209,20 @@ class Chatbot {
     error: null,
     loadProgress: 0,
     downloadSpeedBytesPerSecond: null,
+    downloadedBytes: null,
+    downloadTotalBytes: null,
     currentModelId: null,
   }
   private onStateChange: ((state: ChatbotState) => void) | null = null
   private conversationHistory: ChatMessage[] = []
   private loadToken = 0
+
+  // On the desktop (Tauri) the webview has no WebGPU, so WebLLM cannot run.
+  // Instead we route inference through a native llama.cpp server managed by the
+  // Rust backend (see `llama-runtime.ts`). Everything else — the state machine,
+  // progress UI, agent loop — stays identical.
+  private readonly native = isTauri()
+  private nativeProgressUnlisten: (() => void) | null = null
 
   // Establecer listener para cambios de estado
   public setStateChangeListener(callback: (state: ChatbotState) => void) {
@@ -227,6 +268,10 @@ class Chatbot {
       return 'The browser does not have enough free storage for this model. Free up site storage or try a smaller model.'
     }
 
+    if (/service is not running/i.test(message)) {
+      return 'Chrome’s on-device AI service is still starting. Please try again in a few seconds.'
+    }
+
     return message || 'Error initializing the model'
   }
 
@@ -260,6 +305,8 @@ class Chatbot {
     this.state.error = null
     this.state.loadProgress = 0
     this.state.downloadSpeedBytesPerSecond = null
+    this.state.downloadedBytes = null
+    this.state.downloadTotalBytes = null
     this.state.currentModelId = targetModelId
     this.notifyStateChange()
 
@@ -267,7 +314,21 @@ class Chatbot {
       await this.unloadWebLlmEngine()
       this.destroyPromptApiSession()
 
-      const session = await createChromePromptApiSession(SYSTEM_MESSAGE)
+      const session = await createChromePromptApiSession(SYSTEM_MESSAGE, {
+        onDownloadProgress: (loaded) => {
+          if (loadToken !== this.loadToken) return
+
+          // `loaded` llega como fracción (0-1) del progreso de descarga del modelo.
+          this.state.loadProgress = Math.min(99, Math.round(loaded * 100))
+          this.notifyStateChange()
+        },
+        onStatus: (statusMessage) => {
+          if (loadToken !== this.loadToken) return
+
+          this.state.loadStatusMessage = statusMessage
+          this.notifyStateChange()
+        },
+      })
 
       if (loadToken !== this.loadToken) {
         session.destroy?.()
@@ -281,6 +342,9 @@ class Chatbot {
       this.state.isReady = true
       this.state.loadProgress = 100
       this.state.downloadSpeedBytesPerSecond = null
+      this.state.downloadedBytes = null
+      this.state.downloadTotalBytes = null
+      this.state.loadStatusMessage = null
       this.state.currentModelId = targetModelId
       this.notifyStateChange()
     } catch (error: any) {
@@ -290,6 +354,9 @@ class Chatbot {
       this.state.isReady = false
       this.state.error = this.getInitializationErrorMessage(error)
       this.state.downloadSpeedBytesPerSecond = null
+      this.state.downloadedBytes = null
+      this.state.downloadTotalBytes = null
+      this.state.loadStatusMessage = null
       this.notifyStateChange()
       console.error('Error initializing Chrome Prompt API:', error)
     }
@@ -301,6 +368,13 @@ class Chatbot {
   }
 
   public async loadModel(modelId?: string, forceReload = false): Promise<void> {
+    // En nativo NO normalizamos: los ids son de llama.cpp (p. ej. "qwen2.5-coder-1.5b"),
+    // no de WebLLM, y normalizeModelId los descartaría al default de WebLLM.
+    if (this.native) {
+      await this.loadNativeModel(modelId, forceReload)
+      return
+    }
+
     const targetModelId = this.normalizeModelId(modelId)
 
     if (isChromePromptApiModelId(targetModelId)) {
@@ -323,6 +397,8 @@ class Chatbot {
     this.state.error = null
     this.state.loadProgress = 0
     this.state.downloadSpeedBytesPerSecond = null
+    this.state.downloadedBytes = null
+    this.state.downloadTotalBytes = null
     this.state.currentModelId = targetModelId
     this.notifyStateChange()
 
@@ -349,6 +425,8 @@ class Chatbot {
           lastDownloadSample = null
           currentDownloadSpeedBytesPerSecond = null
           this.state.downloadSpeedBytesPerSecond = null
+          this.state.downloadedBytes = null
+          this.state.downloadTotalBytes = null
         } else {
           if (
             lastDownloadSample &&
@@ -370,6 +448,9 @@ class Chatbot {
           }
 
           this.state.downloadSpeedBytesPerSecond = currentDownloadSpeedBytesPerSecond
+          this.state.downloadedBytes = fetchedBytes
+          this.state.downloadTotalBytes =
+            reportedProgress > 0 && reportedProgress < 100 ? fetchedBytes / (reportedProgress / 100) : fetchedBytes
         }
 
         // Si el progreso reportado es 0, simular un pequeño avance
@@ -379,8 +460,7 @@ class Chatbot {
         }
         // Si el progreso reportado es menor que el simulado, ignorar (no retroceder)
         else if (reportedProgress < simulatedProgress) {
-          // Mantener el progreso simulado actual
-          return
+          // Mantener el progreso simulado actual, pero notificar velocidad y tamaño.
         }
         // Si el progreso reportado es mayor, usarlo y actualizar la simulación
         else {
@@ -414,24 +494,153 @@ class Chatbot {
 
       if (loadToken !== this.loadToken) return
 
+      setWebLlmModelInstallation(targetModelId, true)
       this.resetConversationHistory()
 
       this.state.isInitializing = false
       this.state.isReady = true
       this.state.loadProgress = 100
       this.state.downloadSpeedBytesPerSecond = null
+      this.state.downloadedBytes = null
+      this.state.downloadTotalBytes = null
       this.state.currentModelId = targetModelId
+      this.notifyStateChange()
+    } catch (error: any) {
+      if (loadToken !== this.loadToken) return
+
+      // A failed initialization may still have completed the download before
+      // failing for another reason (for example, insufficient GPU memory).
+      // Re-check IndexedDB the next time instead of retaining a stale result.
+      invalidateWebLlmModelInstallation(targetModelId)
+      this.state.isInitializing = false
+      this.state.isReady = false
+      this.state.error = this.getInitializationErrorMessage(error)
+      this.state.downloadSpeedBytesPerSecond = null
+      this.state.downloadedBytes = null
+      this.state.downloadTotalBytes = null
+      this.notifyStateChange()
+      console.error('Error initializing chatbot:', error)
+    }
+  }
+
+  // --- native llama.cpp backend (desktop) ----------------------------------
+
+  /**
+   * Load the native backend: download the llama.cpp server + a GGUF model (if
+   * missing) and start the local server. Drives the same state machine as the
+   * WebLLM path so the progress UI works unchanged. The desktop always uses the
+   * native default model; the WebLLM `modelId` from the selector is only kept as
+   * `currentModelId` so callers' readiness checks stay consistent.
+   */
+  private async loadNativeModel(modelId: string | undefined, forceReload: boolean): Promise<void> {
+    // `undefined` (o cualquier id no nativo) → deja que el backend use su default.
+    const targetModelId = modelId ?? ''
+    if (this.state.isInitializing && this.state.currentModelId === targetModelId) return
+    if (!forceReload && this.state.isReady && this.state.currentModelId === targetModelId) return
+
+    const loadToken = ++this.loadToken
+    this.state.isInitializing = true
+    this.state.isReady = false
+    this.state.error = null
+    this.state.loadProgress = 0
+    this.state.downloadSpeedBytesPerSecond = null
+    this.state.downloadedBytes = null
+    this.state.downloadTotalBytes = null
+    this.state.currentModelId = targetModelId
+    this.state.loadStatusMessage = 'Checking local AI setup…'
+    this.notifyStateChange()
+
+    await this.subscribeNativeProgress(loadToken)
+
+    try {
+      await prepareLlama(targetModelId || undefined)
+      if (loadToken !== this.loadToken) return
+
+      this.resetConversationHistory()
+      this.state.isInitializing = false
+      this.state.isReady = true
+      this.state.loadProgress = 100
+      this.state.downloadSpeedBytesPerSecond = null
+      this.state.loadStatusMessage = null
       this.notifyStateChange()
     } catch (error: any) {
       if (loadToken !== this.loadToken) return
 
       this.state.isInitializing = false
       this.state.isReady = false
-      this.state.error = this.getInitializationErrorMessage(error)
+      this.state.error = error?.message ? String(error.message) : String(error || 'Error initializing the model')
       this.state.downloadSpeedBytesPerSecond = null
+      this.state.loadStatusMessage = null
       this.notifyStateChange()
-      console.error('Error initializing chatbot:', error)
+      console.error('Error initializing native llama model:', error)
+    } finally {
+      this.teardownNativeProgress()
     }
+  }
+
+  /** Mirror native download/startup progress into the chatbot state. */
+  private async subscribeNativeProgress(loadToken: number): Promise<void> {
+    this.teardownNativeProgress()
+    let lastSample: { bytes: number; timeMs: number } | null = null
+
+    this.nativeProgressUnlisten = await onLlamaProgress((progress: LlamaProgress) => {
+      if (loadToken !== this.loadToken) return
+
+      if (progress.phase === 'model' && progress.total > 0) {
+        const pct = Math.min(99, (progress.downloaded / progress.total) * 100)
+        this.state.loadProgress = pct
+        this.state.downloadedBytes = progress.downloaded
+        this.state.downloadTotalBytes = progress.total
+        const now = performance.now()
+        if (lastSample && progress.downloaded > lastSample.bytes && now > lastSample.timeMs) {
+          this.state.downloadSpeedBytesPerSecond =
+            ((progress.downloaded - lastSample.bytes) / (now - lastSample.timeMs)) * 1000
+        }
+        lastSample = { bytes: progress.downloaded, timeMs: now }
+        // Granular, self-explanatory line: progress + remaining size + speed.
+        const remaining = formatBytes(Math.max(0, progress.total - progress.downloaded))
+        const speed = this.state.downloadSpeedBytesPerSecond
+          ? ` · ${formatBytes(this.state.downloadSpeedBytesPerSecond)}/s`
+          : ''
+        this.state.loadStatusMessage = `Downloading AI model… ${Math.round(pct)}% · ${remaining} left${speed}`
+      } else if (progress.phase === 'starting') {
+        this.state.loadProgress = Math.max(this.state.loadProgress, 99)
+        this.state.downloadSpeedBytesPerSecond = null
+        this.state.downloadedBytes = null
+        this.state.downloadTotalBytes = null
+        this.state.loadStatusMessage = progress.message || 'Starting the local model server…'
+      } else if (progress.phase === 'ready') {
+        this.state.loadProgress = 100
+        this.state.downloadSpeedBytesPerSecond = null
+        this.state.downloadedBytes = null
+        this.state.downloadTotalBytes = null
+        this.state.loadStatusMessage = 'Model ready'
+      } else {
+        // 'binary' phase: the llama.cpp runtime (download/extract). Size is
+        // usually unknown, so keep the bar indeterminate and lean on the message.
+        this.state.downloadSpeedBytesPerSecond = null
+        this.state.downloadedBytes = null
+        this.state.downloadTotalBytes = null
+        this.state.loadStatusMessage = progress.message || 'Setting up the llama.cpp runtime…'
+      }
+
+      this.notifyStateChange()
+    })
+  }
+
+  private teardownNativeProgress(): void {
+    this.nativeProgressUnlisten?.()
+    this.nativeProgressUnlisten = null
+  }
+
+  private async generateNative(
+    messages: ChatMessage[],
+    onChunk?: (chunk: string) => void,
+  ): Promise<string> {
+    if (!this.state.isReady) {
+      throw new Error('The chatbot is not ready. Please wait for it to load.')
+    }
+    return generateLlama(messages, onChunk, { temperature: 0.3, maxTokens: 2048 })
   }
 
   // Enviar un mensaje y obtener respuesta
@@ -525,6 +734,10 @@ class Chatbot {
    * dar sus propias instrucciones y hacer varios turnos de razonamiento.
    */
   public async generate(messages: ChatMessage[], onChunk?: (chunk: string) => void): Promise<string> {
+    if (this.native) {
+      return this.generateNative(messages, onChunk)
+    }
+
     if (isChromePromptApiModelId(this.state.currentModelId)) {
       return this.generateWithPromptApi(messages, onChunk)
     }
@@ -594,14 +807,43 @@ class Chatbot {
   }
 
   public async isModelInstalled(modelId: string): Promise<boolean> {
+    if (this.native) {
+      const info = await getLlamaInfo()
+      if (!info) return false
+      const target =
+        info.models.find((model) => model.id === modelId) ??
+        info.models.find((model) => model.id === info.default_model_id)
+      return Boolean(info.binary_installed && target?.installed)
+    }
+
     if (isChromePromptApiModelId(modelId)) {
       return isChromePromptApiAvailable()
     }
 
-    return hasModelInCache(this.normalizeModelId(modelId), CHATBOT_APP_CONFIG)
+    return isWebLlmModelInstalled(this.normalizeModelId(modelId), CHATBOT_APP_CONFIG)
   }
 
   public async uninstallModel(modelId: string): Promise<void> {
+    if (this.native) {
+      this.loadToken += 1
+      const info = await getLlamaInfo()
+      await stopLlama()
+      if (info) {
+        await uninstallLlamaModel(info.default_model_id).catch(() => {})
+      }
+      this.resetConversationHistory()
+      this.state = {
+        isInitializing: false,
+        isReady: false,
+        error: null,
+        loadProgress: 0,
+        downloadSpeedBytesPerSecond: null,
+        currentModelId: this.normalizeModelId(modelId),
+      }
+      this.notifyStateChange()
+      return
+    }
+
     const targetModelId = this.normalizeModelId(modelId)
     const isCurrentModel = this.state.currentModelId === targetModelId
 
@@ -644,6 +886,7 @@ class Chatbot {
     }
 
     await deleteModelAllInfoInCache(targetModelId, CHATBOT_APP_CONFIG)
+    setWebLlmModelInstallation(targetModelId, false)
 
     if (isCurrentModel) {
       this.notifyStateChange()
@@ -651,6 +894,27 @@ class Chatbot {
   }
 
   public async clearLocalAiData(): Promise<{ deletedCaches: number; deletedDatabases: number; deletedFiles: number }> {
+    if (this.native) {
+      this.loadToken += 1
+      await stopLlama()
+      const info = await getLlamaInfo()
+      const installed = info?.models.filter((model) => model.installed) ?? []
+      for (const model of installed) {
+        await uninstallLlamaModel(model.id).catch(() => {})
+      }
+      this.resetConversationHistory()
+      this.state = {
+        isInitializing: false,
+        isReady: false,
+        error: null,
+        loadProgress: 0,
+        downloadSpeedBytesPerSecond: null,
+        currentModelId: null,
+      }
+      this.notifyStateChange()
+      return { deletedCaches: 0, deletedDatabases: 0, deletedFiles: installed.length }
+    }
+
     this.loadToken += 1
     await this.unloadWebLlmEngine()
     this.destroyPromptApiSession()
@@ -671,6 +935,7 @@ class Chatbot {
       deleteAllIndexedDatabases(),
       deleteOriginPrivateFileSystem(),
     ])
+    invalidateWebLlmModelInstallation()
 
     return { deletedCaches, deletedDatabases, deletedFiles }
   }
@@ -683,6 +948,11 @@ class Chatbot {
   // Destruir la instancia del chatbot
   public async destroy() {
     this.loadToken += 1
+
+    if (this.native) {
+      this.teardownNativeProgress()
+      await stopLlama().catch(() => {})
+    }
 
     if (this.engine) {
       await this.engine.unload()

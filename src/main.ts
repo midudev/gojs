@@ -8,6 +8,7 @@ import {
   CHROME_PROMPT_API_MODEL_ID,
   getChatModelDisplayName,
   getChatModelLabel,
+  getChatModelPresentation,
   getChatModelRecord,
   getChromePromptApiModelLabel,
   isAutoModelId,
@@ -24,19 +25,34 @@ import {
   type RenderWhitespace,
   type Theme,
 } from './storage'
-import { initPrettierWorker, formatCode, destroyPrettierWorker } from './prettier'
+import { formatCode, destroyPrettierWorker } from './prettier'
 import {
   injectExpressionLogging,
   transformImports,
   transpileToJs,
   collectBareSpecifiers,
+  collectNodeBuiltinImports,
   buildImportMap,
   lineMap,
 } from './console'
 import { injectTimings } from './timings'
-import { formatConsoleValueText, isSerializedConsoleValue } from './console-values'
+import {
+  formatConsoleValueText,
+  isSerializedConsoleArguments,
+  isSerializedConsoleValue,
+} from './console-values'
 import { initHeaderPopovers } from './popovers'
-import { initTabs } from './tabs'
+import { initTabs, getActiveTabId, getActiveTabTitle } from './tabs'
+import {
+  recordVersion,
+  getHistory,
+  deleteEntry,
+  buildHistoryViews,
+  type HistoryEntry,
+  type HistorySource,
+  type HistoryView,
+} from './history'
+import { computeLineDiff, type DiffLine } from './diff'
 import { $, $$ } from './dom'
 import { chatbot, ChatbotState } from './chatbot'
 import './keyboard-events'
@@ -45,7 +61,35 @@ import { createRoot } from 'react-dom/client'
 import { ChatResponse } from './ChatResponse'
 import React from 'react'
 import { runAgent, type AgentBridge, type AgentEditInfo, type AgentRunResult } from './agent/agent'
+import {
+  dequeueChatMessage,
+  enqueueChatMessage,
+  prioritizeQueuedMessage,
+  removeQueuedMessage,
+  takeQueuedMessageForEdit,
+  type ChatQueueItem,
+  type ChatQueueSelection,
+} from './chat-queue'
 import { isChromePromptApiAvailable } from './prompt-api'
+import {
+  isTauri,
+  getNodeInfo,
+  isNativeRuntimeAvailable,
+  runNative,
+  stopNative,
+  onNativeOutput,
+  listDependencies,
+  addDependency,
+  removeDependency,
+  updateDependency,
+  revealWorkspace,
+  type Dependency,
+  type NodeInfo,
+} from './native-runtime'
+import { instrumentNodeCode, parseNativeLogLine } from './native-console'
+import { getLlamaInfo, type LlamaInfo, type LlamaModelInfo } from './llama-runtime'
+import { NODE_TYPES_FILES, NODE_TYPES_VERSION } from './node-types.generated'
+import type { Runtime } from './storage'
 // @ts-ignore
 import ExecutorWorker from './executor-worker?worker'
 
@@ -240,9 +284,15 @@ function clearLineTimings() {
 // Publica la altura de línea del editor como variable CSS para que la consola pueda
 // pintar cada log con exactamente la misma altura que una línea de código (así los
 // logs quedan alineados 1:1 con las líneas que los generan).
+function getEditorFontFamilyStack(fontFamily = currentSettings.fontFamily): string {
+  return `"${fontFamily}", Menlo, Monaco, "Courier New", monospace`
+}
+
 function applyEditorLineHeightVar(fontSize: number) {
   const lineHeight = calculateLineHeight(fontSize)
   document.documentElement.style.setProperty('--editor-line-height', `${lineHeight}px`)
+  document.documentElement.style.setProperty('--editor-font-size', `${fontSize}px`)
+  document.documentElement.style.setProperty('--editor-font-family', getEditorFontFamilyStack())
 }
 let currentThemeData: EditorThemeData | null = null
 
@@ -250,10 +300,23 @@ let currentThemeData: EditorThemeData | null = null
 let executorWorker: Worker | null = null
 let executionTimeoutId: number | null = null // Timer del hilo principal para timeout
 const EXECUTION_TIMEOUT = 2000 // 2 segundos de timeout por defecto
+// Timeout del runtime nativo de Node. Más holgado que el del navegador porque
+// el código nativo hace tareas legítimamente lentas (fetch, I/O, etc.), pero
+// acotado para que un bucle infinito no congele la app.
+const NATIVE_EXECUTION_TIMEOUT = 10000
 let teardownStarted = false
 
 // Guardar la última ejecución para evitar ejecuciones innecesarias
 let lastExecutionSignature: string = ''
+
+// Serialización de ejecuciones nativas. El auto-run puede lanzar una nueva
+// ejecución antes de que la anterior termine; sin esto, el listener de la
+// ejecución vieja seguiría escribiendo en la salida (logs duplicados). Cada
+// `runCodeNative` reclama un `runId`; solo el más reciente puede pintar.
+let nativeRunSeq = 0
+// Mayor generación de proceso nativo vista en la salida. Descarta líneas que
+// lleguen de un proceso anterior que aún se está muriendo.
+let latestNativeRunGen = 0
 
 let currentSettings = loadSettings()
 let chromePromptApiModelAvailable = false
@@ -336,8 +399,104 @@ function getVisibleChatModelId(modelId: string): string {
   return modelId
 }
 
+// --- Catálogo de modelos nativos (llama.cpp), solo escritorio --------------
+// En la app de escritorio no hay WebGPU: el asistente corre con llama.cpp. El
+// selector del composer muestra estos modelos representados de forma visual —
+// solo lo que ocupan y su nivel de inteligencia, sin el nombre técnico.
+
+// Debe coincidir con DEFAULT_MODEL_ID en `src-tauri/src/llama_runtime.rs`. Se usa
+// como fallback concreto mientras el catálogo real aún no ha llegado del backend.
+const NATIVE_DEFAULT_MODEL_ID = 'qwen2.5-coder-1.5b'
+
+let nativeLlamaInfo: LlamaInfo | null = null
+
+async function ensureNativeLlamaInfo(force = false): Promise<LlamaInfo | null> {
+  if (!isTauri()) return null
+  if (nativeLlamaInfo && !force) return nativeLlamaInfo
+  nativeLlamaInfo = await getLlamaInfo()
+  return nativeLlamaInfo
+}
+
+function nativeModels(): LlamaModelInfo[] {
+  return nativeLlamaInfo?.models ?? []
+}
+
+function nativeDefaultModelId(): string {
+  return (
+    nativeLlamaInfo?.default_model_id ??
+    nativeModels().find((model) => model.is_default)?.id ??
+    NATIVE_DEFAULT_MODEL_ID
+  )
+}
+
+function isNativeModelId(id: string): boolean {
+  return nativeModels().some((model) => model.id === id)
+}
+
+// Mapea cualquier elección (incluida "auto" o un id viejo de WebLLM) a un id de
+// modelo nativo concreto, para que las comprobaciones de "ya cargado" cuadren.
+function resolveNativeChoice(choice: string): string {
+  return isNativeModelId(choice) ? choice : nativeDefaultModelId()
+}
+
+// Nivel de inteligencia 1–3 a partir del número de parámetros. El catálogo es
+// 0.5B / 1.5B / 3B, así que se mapea limpio a un medidor de 3 puntos y a un
+// nombre de "tier" que es la etiqueta principal del selector.
+function nativeIntelligence(model: LlamaModelInfo): { level: number; name: string } {
+  const billions = Number.parseFloat(model.params)
+  if (!Number.isFinite(billions) || billions < 1) return { level: 1, name: 'Small' }
+  if (billions < 3) return { level: 2, name: 'Medium' }
+  return { level: 3, name: 'Smarter' }
+}
+
+function intelligenceDotsHtml(level: number, maximum = 3): string {
+  return Array.from({ length: maximum }, (_, index) => index + 1)
+    .map((index) => `<i class="chatbot-iq-dot${index <= level ? ' on' : ''}"></i>`)
+    .join('')
+}
+
+function downloadedModelIconHtml(): string {
+  return `
+    <span class="chatbot-model-downloaded" role="img" aria-label="Downloaded" title="Downloaded">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"></circle>
+        <path d="m8.5 12 2.25 2.25L15.5 9.5"></path>
+      </svg>
+    </span>`
+}
+
+// Tamaño limpio para el selector: MB sin decimales, GB con uno ("940 MB", "1.9 GB").
+function formatModelSize(bytes: number): string {
+  const megabytes = bytes / (1024 * 1024)
+  if (megabytes < 1024) return `${Math.round(megabytes)} MB`
+  return `${(megabytes / 1024).toFixed(1)} GB`
+}
+
+// HTML compacto de una opción/etiqueta: nombre (tier) + medidor + tamaño.
+function nativeModelVisualHtml(model: LlamaModelInfo): string {
+  const iq = nativeIntelligence(model)
+  return (
+    `<span class="chatbot-model-tier">${escapeHtml(iq.name)}</span>` +
+    `<span class="chatbot-iq" role="img" aria-label="${escapeHtml(iq.name)}" title="${escapeHtml(iq.name)}">${intelligenceDotsHtml(iq.level)}</span>` +
+    `<span class="chatbot-model-size">${escapeHtml(formatModelSize(model.size_bytes))}</span>`
+  )
+}
+
+// En web ocultamos los nombres técnicos del catálogo y usamos la misma
+// representación del escritorio: nivel de capacidad, medidor y memoria necesaria.
+function webModelVisualHtml(model: (typeof AVAILABLE_CHAT_MODELS)[number]): string {
+  const presentation = getChatModelPresentation(model)
+  const reasoningLabel = `Reasoning level ${presentation.level} of 4`
+  return (
+    `<span class="chatbot-model-tier">${escapeHtml(presentation.name)}</span>` +
+    `<span class="chatbot-iq" role="img" aria-label="${reasoningLabel}" title="${reasoningLabel}">${intelligenceDotsHtml(presentation.level, 4)}</span>` +
+    `<span class="chatbot-model-size">${escapeHtml(presentation.size)}</span>`
+  )
+}
+
 // Resuelve la elección del usuario (que puede ser "auto") a un modelo concreto.
 function resolveModelChoice(choice: string): string {
+  if (isTauri()) return resolveNativeChoice(choice)
   if (isAutoModelId(choice)) {
     return resolveAutoModelId(chromePromptApiModelAvailable)
   }
@@ -364,14 +523,7 @@ function updateChatEmptyState() {
 // ---------------------------------------------------------------------------
 // Selección del editor como contexto del agente (chip en el composer)
 // ---------------------------------------------------------------------------
-interface PendingSelection {
-  text: string
-  startLine: number
-  endLine: number
-  label: string
-}
-
-let pendingSelection: PendingSelection | null = null
+let pendingSelection: ChatQueueSelection | null = null
 
 function getActiveTabLabel(): string {
   const activeTab = document.querySelector('.tab-item.active') as HTMLElement | null
@@ -407,13 +559,18 @@ function renderSelectionChip() {
   })
 }
 
-// Devuelve el contexto de la selección (si hay) formateado para el agente y limpia el chip.
-function takePendingSelection(): string | null {
+// Captura la selección actual y limpia el chip para que cada turno conserve su contexto.
+function takePendingSelection(): ChatQueueSelection | null {
   if (!pendingSelection) return null
-  const { text, startLine, endLine, label } = pendingSelection
-  const range = startLine === endLine ? `line ${startLine}` : `lines ${startLine}-${endLine}`
+  const selection = pendingSelection
   pendingSelection = null
   renderSelectionChip()
+  return selection
+}
+
+function formatSelectionContext(selection: ChatQueueSelection): string {
+  const { text, startLine, endLine, label } = selection
+  const range = startLine === endLine ? `line ${startLine}` : `lines ${startLine}-${endLine}`
   return `The user selected this code from ${label} (${range}):\n\`\`\`\n${text}\n\`\`\``
 }
 
@@ -422,7 +579,11 @@ function setupSelectionContext() {
   if (!editor) return
   editor.onDidChangeCursorSelection(() => {
     const selection = editor.getSelection?.()
-    if (!selection || selection.isEmpty?.()) return
+    if (!selection || selection.isEmpty?.()) {
+      pendingSelection = null
+      renderSelectionChip()
+      return
+    }
     const model = editor.getModel?.()
     const text = model?.getValueInRange(selection) ?? ''
     if (!text.trim()) return
@@ -462,13 +623,68 @@ function setUserModelChoice(choice: string) {
 // de una pantalla de carga. Es null cuando la carga es en segundo plano (silenciosa).
 let modelLoadStatusUpdater: ((text: string) => void) | null = null
 
+// Traduce el estado de carga a una línea paso a paso para el usuario. El backend
+// nativo (llama.cpp) rellena `loadStatusMessage` con el paso concreto en curso
+// ("Downloading llama.cpp runtime…", "Loading model into memory…", etc.); en la web
+// no hay ese detalle, así que caemos al porcentaje de descarga de WebLLM.
+function describeModelLoadStatus(state: ChatbotState): string {
+  if (state.loadStatusMessage) return state.loadStatusMessage
+  const pct = Math.round(state.loadProgress)
+  if (pct <= 0) return 'Preparing model…'
+
+  const details = [`Downloading model… ${pct}%`]
+  const downloadedBytes = state.downloadedBytes
+  const totalBytes = state.downloadTotalBytes
+
+  if (
+    typeof downloadedBytes === 'number' &&
+    typeof totalBytes === 'number' &&
+    Number.isFinite(downloadedBytes) &&
+    Number.isFinite(totalBytes) &&
+    totalBytes > downloadedBytes
+  ) {
+    details.push(`${formatDownloadAmount(totalBytes - downloadedBytes)} left`)
+  }
+
+  const speed = formatDownloadSpeed(state.downloadSpeedBytesPerSecond)
+  if (speed) details.push(speed)
+
+  return details.join(' · ')
+}
+
 // true mientras el agente está procesando un mensaje (evita reentradas / doble envío).
 let agentBusy = false
+let chatQueue: ChatQueueItem[] = []
+let queuedMessageSequence = 0
+let chatQueueCollapsed = false
 
 // Refleja la elección actual en la etiqueta del selector del composer.
 function updateComposerModelLabel() {
   const label = $('#chatbot-model-label') as HTMLElement | null
-  if (label) label.textContent = getModelChoiceShortLabel(userModelChoice)
+  if (!label) return
+
+  if (isTauri()) {
+    const model = nativeModels().find((candidate) => candidate.id === resolveNativeChoice(userModelChoice))
+    if (model) {
+      label.classList.add('chatbot-model-label--native')
+      label.innerHTML = nativeModelVisualHtml(model)
+    } else {
+      label.textContent = 'Local model'
+    }
+    return
+  }
+
+  label.classList.remove('chatbot-model-label--native', 'chatbot-model-label--visual')
+  if (!isAutoModelId(userModelChoice) && !isChromePromptApiModelId(userModelChoice)) {
+    const model = getChatModelRecord(userModelChoice)
+    if (model) {
+      label.classList.add('chatbot-model-label--visual')
+      label.innerHTML = webModelVisualHtml(model)
+      return
+    }
+  }
+
+  label.textContent = getModelChoiceShortLabel(userModelChoice)
 }
 
 // Asegura que el modelo elegido (resuelto) esté cargado; devuelve true si quedó listo.
@@ -493,43 +709,167 @@ function setupComposerModelSelector() {
   const menu = $('#chatbot-model-menu') as HTMLElement | null
   if (!trigger || !menu) return
 
+  let menuRenderVersion = 0
+
   const closeMenu = () => {
+    menuRenderVersion += 1
     menu.hidden = true
+    menu.removeAttribute('aria-busy')
     trigger.setAttribute('aria-expanded', 'false')
   }
 
-  const buildOptions = () => {
-    const choices: Array<{ id: string; name: string; meta: string }> = [
-      { id: AUTO_MODEL_ID, name: 'Auto', meta: 'We pick the best model for you' },
+  const renderNativeOptions = () => {
+    const selected = resolveNativeChoice(userModelChoice)
+    menu.classList.add('chatbot-model-menu--native')
+    menu.classList.remove('chatbot-model-menu--visual')
+    menu.innerHTML = nativeModels()
+      .map((model) => {
+        const iq = nativeIntelligence(model)
+        const state = model.installed ? 'downloaded' : `downloads ${formatModelSize(model.size_bytes)} on first use`
+        return `
+      <button type="button" class="chatbot-model-option chatbot-model-option--native${model.id === selected ? ' selected' : ''}" data-model-id="${escapeHtml(model.id)}" role="option" title="${escapeHtml(iq.name)} · ${escapeHtml(state)}">
+        ${nativeModelVisualHtml(model)}
+        ${model.installed ? downloadedModelIconHtml() : ''}
+      </button>`
+      })
+      .join('')
+  }
+
+  const renderWebOptions = (installedModels: ReadonlySet<string> = new Set()) => {
+    menu.classList.add('chatbot-model-menu--visual')
+    menu.classList.remove('chatbot-model-menu--native')
+    const automaticOptions = [
+      {
+        id: AUTO_MODEL_ID,
+        name: 'Auto',
+        meta: 'Best fit for this device',
+      },
+      ...(chromePromptApiModelAvailable
+        ? [{ id: CHROME_PROMPT_API_MODEL_ID, name: 'System', meta: 'Built in · no download' }]
+        : []),
     ]
 
-    if (chromePromptApiModelAvailable) {
-      choices.push({ id: CHROME_PROMPT_API_MODEL_ID, name: 'Chrome system model', meta: 'Prompt API · no download' })
-    }
-
-    for (const model of AVAILABLE_CHAT_MODELS) {
-      const name = getChatModelDisplayName(model)
-      const meta = getChatModelLabel(model).replace(`${name} · `, '')
-      choices.push({ id: model.model_id, name, meta })
-    }
-
-    menu.innerHTML = choices
+    const automaticOptionsHtml = automaticOptions
       .map(
         (choice) => `
-        <button type="button" class="chatbot-model-option${choice.id === userModelChoice ? ' selected' : ''}" data-model-id="${escapeHtml(choice.id)}" role="option">
+      <button type="button" class="chatbot-model-option chatbot-model-option--automatic${choice.id === userModelChoice ? ' selected' : ''}" data-model-id="${escapeHtml(choice.id)}" role="option">
+        <span class="chatbot-model-option-copy">
           <span class="chatbot-model-option-name">${escapeHtml(choice.name)}</span>
           <span class="chatbot-model-option-meta">${escapeHtml(choice.meta)}</span>
-        </button>`,
+        </span>
+      </button>`,
       )
       .join('')
+
+    const downloadableOptionsHtml = AVAILABLE_CHAT_MODELS.map((model) => {
+      const selected = model.model_id === userModelChoice
+      const presentation = getChatModelPresentation(model)
+      const installed = installedModels.has(model.model_id)
+      const title = `${presentation.name} · ${presentation.size}${installed ? ' · Downloaded' : ''}`
+      return `
+      <button type="button" class="chatbot-model-option chatbot-model-option--visual${selected ? ' selected' : ''}" data-model-id="${escapeHtml(model.model_id)}" role="option" title="${escapeHtml(title)}">
+        ${webModelVisualHtml(model)}
+        ${installed ? downloadedModelIconHtml() : ''}
+      </button>`
+    }).join('')
+
+    menu.innerHTML = `${automaticOptionsHtml}<div class="chatbot-model-divider" role="separator"></div>${downloadableOptionsHtml}`
+  }
+
+  const updateWebInstalledState = (installedModels: ReadonlySet<string>) => {
+    menu.querySelectorAll<HTMLElement>('.chatbot-model-option--visual').forEach((option) => {
+      const modelId = option.dataset.modelId
+      if (!modelId) return
+
+      const model = getChatModelRecord(modelId)
+      if (!model) return
+
+      const installed = installedModels.has(modelId)
+      const presentation = getChatModelPresentation(model)
+      option.title = `${presentation.name} · ${presentation.size}${installed ? ' · Downloaded' : ''}`
+
+      const downloadedIcon = option.querySelector('.chatbot-model-downloaded')
+      if (installed && !downloadedIcon) {
+        option.insertAdjacentHTML('beforeend', downloadedModelIconHtml())
+      } else if (!installed) {
+        downloadedIcon?.remove()
+      }
+    })
+  }
+
+  const buildOptions = async (renderVersion: number) => {
+    menu.setAttribute('aria-busy', 'true')
+
+    // Escritorio: mostramos el catálogo cacheado al instante y lo refrescamos
+    // en segundo plano. En el primer arranque dejamos feedback visible.
+    if (isTauri()) {
+      if (nativeModels().length > 0) {
+        renderNativeOptions()
+      } else {
+        menu.classList.add('chatbot-model-menu--native')
+        menu.classList.remove('chatbot-model-menu--visual')
+        menu.innerHTML = '<div class="chatbot-model-menu-status" role="status">Loading models…</div>'
+      }
+
+      try {
+        await ensureNativeLlamaInfo(true)
+        if (renderVersion !== menuRenderVersion) return
+        renderNativeOptions()
+      } catch (error) {
+        if (renderVersion !== menuRenderVersion) return
+        console.error('Error loading native model list:', error)
+        if (!menu.querySelector('.chatbot-model-option')) {
+          menu.innerHTML =
+            '<div class="chatbot-model-menu-status chatbot-model-menu-status--error" role="alert">Could not load models. Close and try again.</div>'
+        }
+      } finally {
+        if (renderVersion === menuRenderVersion) menu.removeAttribute('aria-busy')
+      }
+      return
+    }
+
+    // Web: las opciones no dependen de IndexedDB, así que se muestran antes de
+    // comprobar cuáles están descargadas.
+    renderWebOptions()
+
+    const installedModels = new Set(
+      (
+        await Promise.all(
+          AVAILABLE_CHAT_MODELS.map(async (model) => ({
+            id: model.model_id,
+            installed: await chatbot.isModelInstalled(model.model_id).catch(() => false),
+          })),
+        )
+      )
+        .filter((model) => model.installed)
+        .map((model) => model.id),
+    )
+
+    if (renderVersion !== menuRenderVersion) return
+    updateWebInstalledState(installedModels)
+    menu.removeAttribute('aria-busy')
+  }
+
+  const openMenu = () => {
+    const renderVersion = ++menuRenderVersion
+    menu.hidden = false
+    trigger.setAttribute('aria-expanded', 'true')
+
+    void buildOptions(renderVersion).catch((error) => {
+      if (renderVersion !== menuRenderVersion) return
+      console.error('Error building model selector:', error)
+      menu.removeAttribute('aria-busy')
+      if (!menu.querySelector('.chatbot-model-option')) {
+        menu.innerHTML =
+          '<div class="chatbot-model-menu-status chatbot-model-menu-status--error" role="alert">Could not load models. Close and try again.</div>'
+      }
+    })
   }
 
   trigger.addEventListener('click', (event) => {
     event.stopPropagation()
     if (menu.hidden) {
-      buildOptions()
-      menu.hidden = false
-      trigger.setAttribute('aria-expanded', 'true')
+      openMenu()
     } else {
       closeMenu()
     }
@@ -566,6 +906,15 @@ function setupComposerModelSelector() {
   })
 
   updateComposerModelLabel()
+
+  // Escritorio: en cuanto llega el catálogo nativo, fijamos una elección concreta
+  // (si la guardada era "auto" o un id viejo de WebLLM) y repintamos la etiqueta.
+  if (isTauri()) {
+    void ensureNativeLlamaInfo().then(() => {
+      if (!isNativeModelId(userModelChoice)) setUserModelChoice(nativeDefaultModelId())
+      updateComposerModelLabel()
+    })
+  }
 }
 
 function getChatModelOptionsHtml(selectedModelId: string): string {
@@ -738,6 +1087,13 @@ function formatDownloadSpeed(bytesPerSecond: number | null): string {
   return `${speed.toFixed(decimals)} ${units[unitIndex]}`
 }
 
+function formatDownloadAmount(bytes: number): string {
+  const megabytes = bytes / (1024 * 1024)
+  if (megabytes >= 1024) return `${(megabytes / 1024).toFixed(1)} GB`
+  if (megabytes >= 10) return `${Math.round(megabytes)} MB`
+  return `${megabytes.toFixed(1)} MB`
+}
+
 function renderChatbotLoadingUI(
   progress = 0,
   modelId?: string | null,
@@ -797,6 +1153,17 @@ function collectPersistedCode(): string {
 // Temas cargados (se conservan para poder re-configurar el LSP sin recargarlos).
 let loadedMonacoThemes: any[] = []
 
+// Tipos de Node.js para el autocompletado (globals como `process`, `Buffer`,
+// `__dirname` y los módulos `node:*`). modern-monaco carga cada URL de
+// `compilerOptions.types` como un fichero del programa, pero NO sigue las
+// `/// <reference path=... />` de esos ficheros. El `index.d.ts` de @types/node
+// es casi solo referencias, así que hay que enumerar index + todas sus
+// referencias (donde viven las declaraciones `declare module "node:os"`, etc.).
+// La lista se genera desde el paquete instalado con `pnpm types:node`.
+const NODE_TYPES_URLS = NODE_TYPES_FILES.map(
+  (file) => `https://esm.sh/@types/node@${NODE_TYPES_VERSION}/${file}`,
+)
+
 // Construye las opciones de `init()` con el import map derivado de los paquetes dados.
 function buildMonacoInitOptions(specifiers: string[]) {
   return {
@@ -812,6 +1179,9 @@ function buildMonacoInitOptions(specifiers: string[]) {
           target: 99, // ES2022
           module: 99, // ESNext
           lib: ['ES2022', 'DOM', 'DOM.Iterable'],
+          // Tipos de Node.js (autocomplete de `process`, `fs`, `node:*`, etc.).
+          // modern-monaco los descarga y añade al programa del LSP.
+          types: NODE_TYPES_URLS,
           strict: true,
           // En un playground el `catch (error)` casual no debería marcar error: dejamos
           // la variable como `any` en vez de `unknown`.
@@ -832,13 +1202,29 @@ function buildMonacoInitOptions(specifiers: string[]) {
 // Inicializar editor
 async function initEditor() {
   const editorElement = $('#editor')!
-  loadedMonacoThemes = await Promise.all(AVAILABLE_THEMES.map(loadThemeData))
+  // Solo cargamos el tema ACTIVO en el arranque. Los demás se registran bajo
+  // demanda al seleccionarlos (changeTheme → defineTheme), así evitamos 8
+  // fetch + parse de JSON en el hilo principal durante el inicio.
+  loadedMonacoThemes = [await loadThemeData(currentSettings.theme)]
 
   // Sembrar el import map del LSP con los paquetes ya importados en las pestañas.
   const seedSpecifiers = collectBareSpecifiers(collectPersistedCode())
 
   // Inicializar Monaco con configuración manual
   monaco = await init(buildMonacoInitOptions(seedSpecifiers))
+
+  // modern-monaco 0.4 incluye `< >` como par coloreable en JS/TS. Eso hace que
+  // cada `>` de `=>` y de una comparación se marque como cierre inesperado,
+  // separando la ligadura y pintándola en rojo. Conservamos el coloreado útil
+  // de (), [] y {}, pero excluimos los ángulos antes de activar el lenguaje.
+  for (const languageId of ['javascript', 'typescript']) {
+    const languageConfig = monaco.languageConfigurations?.[languageId]
+    if (languageConfig?.colorizedBracketPairs) {
+      languageConfig.colorizedBracketPairs = languageConfig.colorizedBracketPairs.filter(
+        ([open, close]: [string, string]) => open !== '<' || close !== '>',
+      )
+    }
+  }
 
   // Crear instancia del editor
   applyEditorLineHeightVar(currentSettings.fontSize)
@@ -855,7 +1241,7 @@ async function initEditor() {
   editor = monaco.editor.create(editorElement, {
     model: initialModel,
     theme: currentSettings.theme,
-    fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`,
+    fontFamily: getEditorFontFamilyStack(),
     fontSize: currentSettings.fontSize,
     lineHeight: calculateLineHeight(currentSettings.fontSize),
     minimap: {
@@ -930,6 +1316,9 @@ async function initEditor() {
     // Re-ejecutar el código de la pestaña activa para refrescar la salida
     runCode()
   })
+
+  // Inicializar el modal de historial de versiones
+  initHistoryModal()
 }
 
 // Sincronizar el color de fondo del editor con la consola y header
@@ -1032,6 +1421,8 @@ function syncThemeColors() {
       themeColors['editorLineNumber.foreground'] ||
       themeColors.foreground ||
       editorForeground
+    const lineNumberColor =
+      themeColors['editorLineNumber.foreground'] || consoleSecondaryColor || getEditorTokenColor('mtk1')
 
     // Mapear tokens de Monaco a variables CSS
     const stringColor = getThemeTokenColor(['string'], getEditorTokenColor('mtk12') || '#ce9178')
@@ -1055,6 +1446,7 @@ function syncThemeColors() {
     // Establecer variables CSS
     document.documentElement.style.setProperty('--console-text-primary', editorForeground || '#e4e4e4')
     document.documentElement.style.setProperty('--console-text-secondary', consoleSecondaryColor || '#a0a0a0')
+    document.documentElement.style.setProperty('--editor-line-number-foreground', lineNumberColor || '#858585')
     document.documentElement.style.setProperty('--theme-string', stringColor)
     document.documentElement.style.setProperty('--theme-number', numberColor)
     document.documentElement.style.setProperty('--theme-keyword', keywordColor)
@@ -1216,6 +1608,10 @@ function applyThemeUiColors(themeName: Theme, themeData: EditorThemeData) {
   root.style.setProperty(
     '--color-warning',
     getThemeColor(colors, ['terminal.ansiYellow', 'charts.yellow'], fallback.warning),
+  )
+  root.style.setProperty(
+    '--color-info',
+    getThemeColor(colors, ['terminal.ansiBlue', 'charts.blue', 'textLink.foreground'], '#4fc3f7'),
   )
 
   document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', accent)
@@ -1474,7 +1870,8 @@ function scrapeConsoleOutput(outputElement: HTMLElement): AgentRunResult {
     const type = entry.classList.contains('error') ? 'error' : entry.classList.contains('warn') ? 'warn' : 'log'
     const content = contentEl?.textContent?.trim() ?? entry.textContent?.trim() ?? ''
     if (!content) return
-    const lineNumber = lineNumberEl?.textContent?.trim() ?? ''
+    const sourceLine = (lineNumberEl as HTMLElement | null)?.dataset.lineNumber
+    const lineNumber = sourceLine ? `L${sourceLine}` : ''
     const prefix = type === 'error' ? 'ERROR: ' : type === 'warn' ? 'WARN: ' : ''
     lines.push(lineNumber ? `${prefix}${content} (${lineNumber})` : `${prefix}${content}`)
   })
@@ -1498,6 +1895,446 @@ async function runCodeAndCollect(): Promise<AgentRunResult> {
   return scrapeConsoleOutput(outputElement)
 }
 
+// ─── Historial de versiones ────────────────────────────────────────────────
+
+// Intervalo mínimo entre snapshots automáticos de una misma pestaña. Evita
+// generar decenas de versiones mientras se escribe con el auto-run activo.
+const MIN_SNAPSHOT_INTERVAL = 15_000
+let lastSnapshotAt = 0
+let lastSnapshotTabId: string | null = null
+
+/**
+ * Guarda una versión del código actual. Los snapshots automáticos (`run`,
+ * `auto`) se limitan por tiempo; los manuales (`manual`) se guardan siempre.
+ */
+function maybeSnapshot(code: string, source: HistorySource) {
+  const tabId = getActiveTabId()
+  if (!tabId) return
+
+  const now = Date.now()
+  const isManual = source === 'manual'
+  const throttled = lastSnapshotTabId === tabId && now - lastSnapshotAt < MIN_SNAPSHOT_INTERVAL
+  if (!isManual && throttled) return
+
+  const entry = recordVersion(tabId, code, { source })
+  if (!entry) return
+
+  lastSnapshotAt = now
+  lastSnapshotTabId = tabId
+  refreshHistoryIfOpen()
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const diff = Date.now() - timestamp
+  const sec = Math.round(diff / 1000)
+  if (sec < 5) return 'just now'
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.round(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hours = Math.round(min / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  return `${days}d ago`
+}
+
+const HISTORY_SOURCE_LABEL: Record<HistorySource, string> = {
+  run: 'run',
+  manual: 'saved',
+  auto: 'auto',
+}
+
+function restoreVersion(entry: HistoryEntry) {
+  if (!editor) return
+  const tabId = getActiveTabId()
+  // Antes de sobrescribir, guardamos el estado actual como versión para que la
+  // restauración sea reversible.
+  if (tabId) recordVersion(tabId, editor.getValue(), { source: 'manual' })
+
+  editor.setValue(entry.content)
+  editor.focus()
+  refreshHistoryList()
+  if (autoRunEnabled) runCode()
+}
+
+function refreshHistoryIfOpen() {
+  const modal = document.getElementById('history-modal')
+  if (modal && modal.style.display === 'flex') refreshHistoryList()
+}
+
+// Idioma actual del editor, para colorear el diff con Monaco.
+function getEditorDiffLanguage(): 'javascript' | 'typescript' {
+  return editor?.getModel?.()?.getLanguageId?.() === 'javascript' ? 'javascript' : 'typescript'
+}
+
+// Nº máximo de líneas que se muestran en el preview del diff (igual que la
+// tarjeta del agente) para no bloquear con archivos enormes.
+const HISTORY_DIFF_PREVIEW_LINES = 80
+
+// Por encima de este tamaño no calculamos el diff de forma anticipada para las
+// stats de la cabecera (evita bloquear al abrir el modal con archivos enormes);
+// el diff completo se calcula solo al expandir esa tarjeta.
+const HISTORY_DIFF_EAGER_CHARS = 60_000
+
+/**
+ * Pinta las líneas de un diff dentro de `container` reutilizando las clases del
+ * diff del agente. En modo `showAll` (versión inicial) muestra todas las líneas;
+ * en caso contrario muestra solo las líneas cambiadas con una línea de contexto.
+ */
+function renderHistoryDiffLines(container: HTMLElement, lines: DiffLine[], showAll: boolean): void {
+  let indexes: number[]
+  let hiddenCount: number
+
+  if (showAll) {
+    indexes = lines.map((_, index) => index).slice(0, HISTORY_DIFF_PREVIEW_LINES)
+    hiddenCount = Math.max(0, lines.length - indexes.length)
+  } else {
+    const changedIndexes = lines.flatMap((line, index) => (line.type === 'ctx' ? [] : [index]))
+    const previewIndexes = new Set<number>()
+    for (const index of changedIndexes) {
+      for (let context = Math.max(0, index - 1); context <= Math.min(lines.length - 1, index + 1); context++) {
+        previewIndexes.add(context)
+      }
+    }
+    const sorted = [...previewIndexes].sort((a, b) => a - b)
+    indexes = sorted.slice(0, HISTORY_DIFF_PREVIEW_LINES)
+    hiddenCount = previewIndexes.size - indexes.length
+  }
+
+  // Empezamos en -1 para que la primera fila renderizada nunca muestre un
+  // separador de hueco (solo aparece cuando de verdad se saltan líneas).
+  let previousIndex = -1
+  container.innerHTML =
+    indexes
+      .map((index) => {
+        const line = lines[index]
+        const cls = line.type === 'ctx' ? 'ctx' : line.type
+        const num = line.type === 'del' ? line.oldLine : line.newLine
+        const sign = line.type === 'add' ? '+' : line.type === 'del' ? '−' : ''
+        const separator = index > previousIndex + 1 ? '<div class="diff-separator" aria-hidden="true">···</div>' : ''
+        previousIndex = index
+        return `${separator}<div class="diff-row ${cls}"><span class="diff-num">${num ?? ''}</span><span class="diff-sign">${sign}</span><span class="diff-code" data-diff-index="${index}">${escapeHtml(line.text) || ' '}</span></div>`
+      })
+      .join('') + (hiddenCount > 0 ? `<div class="diff-more">… ${hiddenCount} more lines</div>` : '')
+}
+
+// Colorea (lazy, con Monaco) las líneas ya pintadas del diff del historial.
+async function colorizeHistoryDiff(container: HTMLElement, lines: DiffLine[], language: string): Promise<void> {
+  const codeElements = container.querySelectorAll<HTMLElement>('.diff-code[data-diff-index]')
+  await Promise.all(
+    [...codeElements].map(async (codeElement) => {
+      const index = Number(codeElement.dataset.diffIndex)
+      const line = lines[index]
+      if (!line || !monaco?.editor?.colorize) return
+      const highlighted = await monaco.editor.colorize(line.text || ' ', language, {})
+      if (codeElement.isConnected) codeElement.innerHTML = highlighted
+    }),
+  )
+}
+
+function renderHistoryCard(view: HistoryView, tabId: string, isCurrent: boolean): HTMLElement {
+  const { entry, previousContent, diffKind } = view
+  const language = getEditorDiffLanguage()
+
+  const item = document.createElement('div')
+  item.className = 'history-item collapsed'
+  item.setAttribute('role', 'listitem')
+  if (isCurrent) item.classList.add('is-current')
+  if (diffKind === 'unchanged') item.classList.add('is-unchanged')
+
+  // Diff calculado de forma anticipada para las stats (+N −M), salvo que el
+  // contenido sea muy grande: en ese caso se difiere al expandir.
+  const isDelta = diffKind === 'delta' && previousContent !== null
+  const tooBigForEager =
+    isDelta && (previousContent!.length + entry.content.length) > HISTORY_DIFF_EAGER_CHARS
+  const eagerDiff = isDelta && !tooBigForEager ? computeLineDiff(previousContent!, entry.content) : null
+
+  const expandable = diffKind !== 'unchanged'
+
+  // ── Cabecera clicable ──────────────────────────────────────────────────
+  const head = document.createElement('button')
+  head.type = 'button'
+  head.className = 'history-item-head'
+  head.setAttribute('aria-expanded', 'false')
+  head.title = new Date(entry.createdAt).toLocaleString()
+
+  const badge = `<span class="history-badge history-badge-${entry.source}">${HISTORY_SOURCE_LABEL[entry.source]}</span>`
+  const time = `<span class="history-time">${escapeHtml(formatRelativeTime(entry.createdAt))}</span>`
+  const label = entry.label ? `<span class="history-label">${escapeHtml(entry.label)}</span>` : ''
+
+  let stats: string
+  if (diffKind === 'initial') {
+    stats = '<span class="history-stat-initial">Initial version</span>'
+  } else if (diffKind === 'unchanged') {
+    stats = '<span class="history-stat-muted">No changes</span>'
+  } else if (eagerDiff) {
+    stats = [
+      eagerDiff.added > 0 ? `<span class="diff-add">+${eagerDiff.added}</span>` : '',
+      eagerDiff.removed > 0 ? `<span class="diff-del">−${eagerDiff.removed}</span>` : '',
+    ].join('') || '<span class="history-stat-muted">No changes</span>'
+  } else {
+    stats = '<span class="history-stat-muted">Modified</span>'
+  }
+
+  const currentTag = isCurrent ? '<span class="history-current-tag">current</span>' : ''
+  const chevron = expandable
+    ? '<svg class="history-item-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 9l6 6l6 -6"/></svg>'
+    : ''
+
+  head.innerHTML = `${badge}${time}${label}<span class="history-item-stats">${stats}${currentTag}</span>${chevron}`
+
+  // ── Cuerpo con el diff (lazy) ──────────────────────────────────────────
+  let diffEl: HTMLElement | null = null
+  let diffBuilt = false
+
+  if (expandable) {
+    diffEl = document.createElement('div')
+    diffEl.className = 'history-item-diff'
+
+    const directionLabel = document.createElement('div')
+    directionLabel.className = 'history-diff-direction'
+    directionLabel.textContent = diffKind === 'initial' ? 'Initial version' : 'Changes from previous version'
+
+    const diffBody = document.createElement('div')
+    diffBody.className = 'history-diff-body agent-card-diff'
+
+    diffEl.appendChild(directionLabel)
+    diffEl.appendChild(diffBody)
+
+    const buildDiff = () => {
+      if (diffBuilt) return
+      diffBuilt = true
+      if (diffKind === 'initial') {
+        const lines: DiffLine[] = entry.content.split('\n').map((text, index) => ({
+          type: 'ctx',
+          text,
+          oldLine: index + 1,
+          newLine: index + 1,
+        }))
+        renderHistoryDiffLines(diffBody, lines, true)
+        void colorizeHistoryDiff(diffBody, lines, language)
+      } else {
+        const diff = eagerDiff ?? computeLineDiff(previousContent ?? '', entry.content)
+        renderHistoryDiffLines(diffBody, diff.lines, false)
+        void colorizeHistoryDiff(diffBody, diff.lines, language)
+      }
+    }
+
+    head.addEventListener('click', () => {
+      const collapsed = item.classList.toggle('collapsed')
+      head.setAttribute('aria-expanded', String(!collapsed))
+      if (!collapsed) buildDiff()
+    })
+  }
+
+  // ── Acciones explícitas (Restore / Delete) ─────────────────────────────
+  const actions = document.createElement('div')
+  actions.className = 'history-item-actions'
+
+  const restoreBtn = document.createElement('button')
+  restoreBtn.type = 'button'
+  restoreBtn.className = 'history-item-btn'
+  restoreBtn.textContent = 'Restore'
+  restoreBtn.disabled = isCurrent
+  restoreBtn.addEventListener('click', () => restoreVersion(entry))
+
+  const deleteBtn = document.createElement('button')
+  deleteBtn.type = 'button'
+  deleteBtn.className = 'history-item-btn history-item-btn-danger'
+  deleteBtn.textContent = 'Delete'
+  deleteBtn.addEventListener('click', () => {
+    deleteEntry(tabId, entry.id)
+    refreshHistoryList()
+  })
+
+  actions.appendChild(restoreBtn)
+  actions.appendChild(deleteBtn)
+
+  item.appendChild(head)
+  if (diffEl) item.appendChild(diffEl)
+  item.appendChild(actions)
+  return item
+}
+
+function refreshHistoryList() {
+  const listEl = document.getElementById('history-list')
+  const emptyEl = document.getElementById('history-empty')
+  const subtitleEl = document.getElementById('history-subtitle')
+  if (!listEl) return
+
+  const tabId = getActiveTabId()
+  const entries = tabId ? getHistory(tabId) : []
+
+  if (subtitleEl) {
+    const title = getActiveTabTitle()
+    subtitleEl.textContent = entries.length
+      ? `${entries.length} version${entries.length === 1 ? '' : 's'} · ${title}`
+      : title
+  }
+
+  listEl.innerHTML = ''
+  if (emptyEl) emptyEl.hidden = entries.length > 0
+
+  if (!tabId || entries.length === 0) return
+
+  const currentCode = editor?.getValue() ?? ''
+  const views = buildHistoryViews(entries)
+
+  const fragment = document.createDocumentFragment()
+  for (const view of views) {
+    const isCurrent = view.entry.content === currentCode
+    fragment.appendChild(renderHistoryCard(view, tabId, isCurrent))
+  }
+  listEl.appendChild(fragment)
+}
+
+function initHistoryModal() {
+  const historyButton = document.getElementById('history-button')
+  const historyModal = document.getElementById('history-modal')
+  const closeHistory = document.getElementById('close-history')
+  const saveButton = document.getElementById('history-save')
+  const overlay = historyModal?.querySelector('.modal-overlay')
+  if (!historyButton || !historyModal) return
+
+  let trigger: HTMLElement | null = null
+
+  const open = () => {
+    trigger = document.activeElement instanceof HTMLElement ? document.activeElement : historyButton
+    refreshHistoryList()
+    historyModal.style.display = 'flex'
+    historyModal.classList.add('is-open')
+    historyModal.setAttribute('aria-hidden', 'false')
+    closeHistory?.focus()
+  }
+
+  const close = () => {
+    historyModal.classList.remove('is-open')
+    historyModal.style.display = 'none'
+    historyModal.setAttribute('aria-hidden', 'true')
+    trigger?.focus()
+  }
+
+  historyButton.addEventListener('click', open)
+  closeHistory?.addEventListener('click', close)
+  overlay?.addEventListener('click', close)
+
+  saveButton?.addEventListener('click', () => {
+    if (!editor) return
+    const tabId = getActiveTabId()
+    if (!tabId) return
+    const entry = recordVersion(tabId, editor.getValue(), { source: 'manual' })
+    if (entry) {
+      lastSnapshotAt = Date.now()
+      lastSnapshotTabId = tabId
+    }
+    refreshHistoryList()
+  })
+
+  const getFocusableModalElements = () =>
+    Array.from(
+      historyModal.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((element) => element.tabIndex >= 0 && !element.closest('[hidden]') && element.offsetParent !== null)
+
+  document.addEventListener('keydown', (e) => {
+    if (historyModal.style.display !== 'flex') return
+
+    if (e.key === 'Escape') {
+      close()
+      return
+    }
+
+    if (e.key === 'Tab') {
+      const focusableElements = getFocusableModalElements()
+      const firstElement = focusableElements[0]
+      const lastElement = focusableElements[focusableElements.length - 1]
+
+      if (!firstElement || !lastElement) {
+        e.preventDefault()
+        return
+      }
+
+      if (e.shiftKey && document.activeElement === firstElement) {
+        e.preventDefault()
+        lastElement.focus()
+      } else if (!e.shiftKey && document.activeElement === lastElement) {
+        e.preventDefault()
+        firstElement.focus()
+      }
+    }
+  })
+}
+
+const LOG_TYPE_ICON_PATHS: Record<string, string> = {
+  info: '<circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 4.5h.01"/>',
+  warn: '<path d="M8 2.5 14 13H2L8 2.5Z"/><path d="M8 6v3M8 11.5h.01"/>',
+  error: '<circle cx="8" cy="8" r="6"/><path d="m6 6 4 4m0-4-4 4"/>',
+  time: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/>',
+  count: '<path d="M6 2.5 4.5 13.5m7-11L10 13.5M2.5 6h11M2 10h11"/>',
+  notice: '<path d="M3 2.5h10v11H3z"/><path d="m5.5 6 1.5 1.5L5.5 9M8.5 9h2"/>',
+  timeout: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8M8 11.5h.01"/>',
+}
+
+function createLogTypeIcon(type: string, label = type): HTMLSpanElement | null {
+  const paths = LOG_TYPE_ICON_PATHS[type]
+  if (!paths) return null
+
+  const icon = document.createElement('span')
+  icon.className = 'log-type-icon'
+  icon.dataset.type = type
+  icon.setAttribute('role', 'img')
+  icon.setAttribute('aria-label', label)
+  icon.title = label
+  icon.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${paths}</svg>`
+  return icon
+}
+
+// Muestra un aviso claro cuando el código en modo JavaScript importa módulos
+// nativos de Node.js (que no existen en el sandbox del navegador). En desktop,
+// ofrece un botón para cambiar al runtime de Node.js con un solo clic.
+async function showNodeBuiltinNotice(outputElement: Element, specifiers: string[]) {
+  const canUseNode = isTauri() && (await isNativeRuntimeAvailable())
+
+  const entry = document.createElement('div')
+  entry.className = 'log-entry notice'
+
+  const typeIcon = createLogTypeIcon('notice', 'Node.js')
+  if (typeIcon) entry.appendChild(typeIcon)
+
+  const content = document.createElement('span')
+  content.className = 'log-content'
+
+  const modules = specifiers.map((s) => `“${s}”`).join(', ')
+  const isPlural = specifiers.length > 1
+  content.append(
+    document.createTextNode(
+      `${modules} ${isPlural ? "are Node.js built-in modules and aren't" : "is a Node.js built-in module and isn't"} available in the browser's JavaScript runtime. `,
+    ),
+  )
+  content.append(
+    document.createTextNode(
+      canUseNode
+        ? 'Switch to the Node.js runtime to run this code.'
+        : 'Open GoJS as a desktop app and use the Node.js runtime to run this code.',
+    ),
+  )
+
+  entry.appendChild(content)
+
+  if (canUseNode) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'log-notice-action'
+    button.textContent = 'Switch to Node.js'
+    button.addEventListener('click', () => {
+      setRuntime('node', { explicit: true })
+    })
+    entry.appendChild(button)
+  }
+
+  outputElement.appendChild(entry)
+}
+
 // Ejecutar código
 async function runCode() {
   if (!editor) return
@@ -1515,6 +2352,11 @@ async function runCode() {
     return
   }
 
+  // El código ha cambiado respecto a la última ejecución: buen momento para
+  // guardar una versión en el historial (con throttle para no saturar durante
+  // el auto-run mientras se escribe).
+  maybeSnapshot(code, 'run')
+
   const outputElement = $('#output')!
 
   // Limpiar salida anterior
@@ -1529,12 +2371,10 @@ async function runCode() {
     const entry = document.createElement('div')
     entry.className = `log-entry ${type}`
 
-    // No mostrar el tipo para expresiones
-    if (type !== 'expression') {
-      const typeSpan = document.createElement('span')
-      typeSpan.className = 'log-type'
-      typeSpan.textContent = type
-      entry.appendChild(typeSpan)
+    // LOG y TABLE no necesitan icono; el resto se identifica en el gutter.
+    if (type !== 'expression' && type !== 'log' && type !== 'table') {
+      const typeIcon = createLogTypeIcon(type)
+      if (typeIcon) entry.appendChild(typeIcon)
     }
 
     // Si es una tabla, renderizar de forma especial
@@ -1542,21 +2382,19 @@ async function runCode() {
       const tableElement = createTableElement(data, columns)
       entry.appendChild(tableElement)
     } else {
-      const contentSpan = document.createElement('span')
+      const contentSpan = document.createElement('div')
       contentSpan.className = 'log-content'
 
       // Formatear el contenido con syntax highlighting
-      // Para expresiones, el array ES el valor (no múltiples argumentos)
-      if (Array.isArray(data) && type !== 'expression') {
-        // Múltiples argumentos de console.log, console.info, etc.
-        data.forEach((arg, index) => {
-          if (index > 0) {
-            contentSpan.appendChild(document.createTextNode(' '))
-          }
-          appendFormattedValue(contentSpan, arg)
+      if (isSerializedConsoleArguments(data)) {
+        contentSpan.classList.add('log-content--arguments')
+        data.__values.forEach((argument) => {
+          const row = document.createElement('div')
+          row.className = 'log-argument'
+          appendFormattedValue(row, argument)
+          contentSpan.appendChild(row)
         })
       } else {
-        // Un solo valor (o una expresión que devuelve un array)
         appendFormattedValue(contentSpan, data)
       }
 
@@ -1567,8 +2405,10 @@ async function runCode() {
     if (lineNumber !== null) {
       const lineSpan = document.createElement('span')
       lineSpan.className = 'log-line-number'
-      lineSpan.textContent = `L${lineNumber}`
-      entry.appendChild(lineSpan)
+      lineSpan.textContent = String(lineNumber)
+      lineSpan.dataset.lineNumber = String(lineNumber)
+      lineSpan.setAttribute('aria-label', `Line ${lineNumber}`)
+      entry.prepend(lineSpan)
 
       // Agregar eventos de hover para destacar la línea en el editor
       entry.addEventListener('mouseenter', () => {
@@ -1591,10 +2431,39 @@ async function runCode() {
     outputElement.appendChild(entry)
   }
 
+  // Native Node.js runtime path (desktop only). Instead of the sandboxed
+  // browser worker, run the editor's code against a real Node 26 process so it
+  // can use installed npm dependencies, the full stdlib and native modules.
+  if (currentSettings.runtime === 'node') {
+    if (await isNativeRuntimeAvailable()) {
+      await runCodeNative(code, addLog)
+      lastExecutionSignature = executionSignature
+      return
+    }
+    // Runtime selected but not usable (e.g. running on the web): tell the user
+    // and fall through to the browser worker so code still runs.
+    addLog(
+      'warn',
+      null,
+      'Native Node runtime is not available here — falling back to the browser sandbox. Open GoJS as a desktop app to use Node.',
+    )
+  }
+
   try {
     // Transpilar TypeScript a JavaScript (solo type-stripping) antes de que acorn
     // procese el código: acorn no entiende sintaxis TS. Preserva las líneas.
     const jsCode = await transpileToJs(code)
+
+    // Los módulos nativos de Node.js (`node:os`, `fs`, …) no existen en el sandbox
+    // del navegador. Si intentamos importarlos, WKWebView falla al resolverlos y lo
+    // reporta como un error críptico de CORS. Lo interceptamos aquí para mostrar un
+    // mensaje claro y ofrecer cambiar al runtime de Node.js.
+    const nodeBuiltins = collectNodeBuiltinImports(jsCode)
+    if (nodeBuiltins.length > 0) {
+      await showNodeBuiltinNotice(outputElement, nodeBuiltins)
+      lastExecutionSignature = executionSignature
+      return
+    }
 
     // Reescribir imports estáticos a import() dinámicos (permite ESM desde CDN)
     const codeWithImports = transformImports(jsCode)
@@ -1733,8 +2602,479 @@ async function runCode() {
   }
 }
 
+// Ejecuta el código del editor contra el runtime nativo de Node.js (solo
+// desktop). La salida stdout/stderr se transmite en vivo al panel de salida.
+type AddLogFn = (
+  type: 'log' | 'info' | 'warn' | 'error' | 'time' | 'table' | 'count' | 'expression' | 'timeout',
+  lineNumber: number | null,
+  data?: any,
+  columns?: string[],
+) => void
+
+async function runCodeNative(code: string, addLog: AddLogFn) {
+  // Reclamar el turno de ejecución. Cualquier ejecución nativa anterior queda
+  // superada: su listener dejará de pintar en cuanto vea que ya no es la última.
+  const runId = ++nativeRunSeq
+
+  // Transpilar TS → JS (solo type-stripping) manteniendo los imports intactos,
+  // para que `import x from 'pkg'` resuelva desde el node_modules del workspace
+  // (sin reescritura a CDN, que es lo contrario de lo que queremos en Node).
+  let jsCode = code
+  try {
+    jsCode = await transpileToJs(code)
+  } catch {
+    // Si el type-stripping falla, dejamos que Node procese el fuente original.
+    jsCode = code
+  }
+
+  // Cancelar cualquier ejecución nativa anterior que siga viva (p. ej. un
+  // re-run mientras la previa aún corría) para no acumular procesos.
+  await stopNative()
+
+  // Instrumentar `console.*` para que la salida llegue tipada (log/info/warn/
+  // error/table/count/time) y enlazada a su línea, igual que en el sandbox.
+  const instrumentedCode = instrumentNodeCode(jsCode).replace(
+    'return s.length === 1 ? s[0] : s;',
+    'return s.length === 1 ? s[0] : { __type: "Arguments", __values: s };',
+  )
+
+  // Suscribirse a la salida en vivo ANTES de lanzar el proceso. Las líneas de
+  // nuestra instrumentación se pintan tipadas; el resto (stdout crudo de un
+  // proceso hijo, errores nativos por stderr) se muestra tal cual.
+  const unlisten = await onNativeOutput((chunk) => {
+    // Solo la ejecución más reciente pinta: si otra la ha superado, callar.
+    if (runId !== nativeRunSeq) return
+    // Descartar salida de un proceso nativo anterior que aún se está muriendo
+    // (llega con una generación menor). La salida de npm usa 0 y nunca se filtra.
+    if (chunk.run !== 0) {
+      if (chunk.run < latestNativeRunGen) return
+      latestNativeRunGen = chunk.run
+    }
+    const parsed = parseNativeLogLine(chunk.line)
+    if (parsed) {
+      addLog(parsed.type, parsed.line, parsed.data, parsed.columns)
+    } else {
+      addLog(chunk.channel === 'stderr' ? 'error' : 'log', null, chunk.line)
+    }
+  })
+
+  try {
+    const result = await runNative(instrumentedCode, 'js', NATIVE_EXECUTION_TIMEOUT)
+    if (result.timed_out) {
+      // El backend ya mató el proceso; solo lo comunicamos al usuario.
+      addLog(
+        'error',
+        null,
+        `⏱️ Execution stopped: the code exceeded the timeout limit (${NATIVE_EXECUTION_TIMEOUT / 1000}s)`,
+      )
+      addLog('warn', null, 'Possible infinite loop or code that takes too long to execute')
+    } else if (result.exit_code != null && result.exit_code !== 0) {
+      addLog('warn', null, `Process exited with code ${result.exit_code} · ${result.duration_ms}ms`)
+    }
+  } catch (error: any) {
+    addLog('error', null, `Native runtime error: ${error?.message || error}`)
+  } finally {
+    unlisten()
+  }
+}
+
+// -------------------------------------------------------------------------
+// UI del runtime nativo (solo desktop): selector del header, pestaña de
+// Settings y gestor de dependencias (npm install/update/uninstall).
+// -------------------------------------------------------------------------
+
+// Mantiene sincronizados el botón del header y el <select> de Settings con el
+// runtime activo, y actualiza iconos/etiqueta/título.
+function applyRuntimeUI(runtime: Runtime) {
+  const toggle = $('#runtime-toggle-button') as HTMLButtonElement | null
+  const browserIcon = $('#runtime-browser-icon') as HTMLElement | null
+  const nodeIcon = $('#runtime-node-icon') as HTMLElement | null
+  const label = $('#runtime-label') as HTMLElement | null
+  const select = $('#setting-runtime') as HTMLSelectElement | null
+  const isNode = runtime === 'node'
+
+  if (browserIcon) browserIcon.style.display = isNode ? 'none' : ''
+  if (nodeIcon) nodeIcon.style.display = isNode ? '' : 'none'
+  if (label) label.textContent = isNode ? 'Node' : 'JS'
+  if (toggle) {
+    toggle.title = isNode ? 'Runtime: Node.js (native) — click to switch' : 'Runtime: Browser sandbox — click to switch'
+    toggle.classList.toggle('is-node', isNode)
+    toggle.setAttribute('aria-pressed', String(isNode))
+  }
+  if (select) select.value = runtime
+}
+
+function setRuntime(runtime: Runtime, { rerun = true, explicit = false }: { rerun?: boolean; explicit?: boolean } = {}) {
+  currentSettings = updateSetting(currentSettings, 'runtime', runtime)
+  // Marcar la elección como explícita solo cuando la origina el usuario, para
+  // que el default automático (Node.js en desktop) no la sobrescriba después.
+  if (explicit && !currentSettings.runtimeExplicit) {
+    currentSettings = updateSetting(currentSettings, 'runtimeExplicit', true)
+  }
+  applyRuntimeUI(runtime)
+  if (rerun) {
+    // Forzar una nueva ejecución (el runtime cambió aunque el código no).
+    lastExecutionSignature = ''
+    runCode()
+  }
+}
+
+async function setupNativeRuntimeUI() {
+  // En la web no hay runtime nativo: aseguramos 'browser' y ocultamos la UI.
+  applyRuntimeUI(currentSettings.runtime)
+
+  if (!isTauri()) {
+    if (currentSettings.runtime !== 'browser') setRuntime('browser', { rerun: false })
+    return
+  }
+
+  const toggle = $('#runtime-toggle-button') as HTMLButtonElement | null
+  const runtimeTab = $('#settings-tab-runtime') as HTMLElement | null
+  const runtimeSelect = $('#setting-runtime') as HTMLSelectElement | null
+  const nodeStatus = $('#setting-node-status') as HTMLElement | null
+
+  // Revelar los controles específicos de desktop.
+  if (toggle) toggle.hidden = false
+  if (runtimeTab) runtimeTab.hidden = false
+
+  const info: NodeInfo | null = await getNodeInfo(true)
+  const renderNodeStatus = () => {
+    if (!nodeStatus) return
+    if (info?.available) {
+      const src = info.source === 'bundled' ? 'bundled' : 'system'
+      nodeStatus.textContent = `Node ${info.version} (${src})${info.npm_version ? ` · npm ${info.npm_version}` : ''}`
+      nodeStatus.classList.remove('error')
+    } else {
+      nodeStatus.textContent =
+        'No Node.js runtime found. Ship the bundled Node with the app, or install Node on your PATH.'
+      nodeStatus.classList.add('error')
+    }
+  }
+  renderNodeStatus()
+
+  if (info?.available) {
+    // En desktop, Node.js es el runtime por defecto. Solo lo aplicamos si el
+    // usuario no ha elegido explícitamente otro runtime. Re-ejecutamos porque
+    // la ejecución inicial ya corrió (en el sandbox) antes de resolverse esto.
+    if (!currentSettings.runtimeExplicit && currentSettings.runtime !== 'node') {
+      setRuntime('node', { rerun: true })
+    }
+  } else if (currentSettings.runtime === 'node') {
+    // Node estaba seleccionado pero no hay runtime disponible: degradar a browser.
+    setRuntime('browser', { rerun: false })
+  }
+
+  toggle?.addEventListener('click', async () => {
+    const next: Runtime = currentSettings.runtime === 'node' ? 'browser' : 'node'
+    if (next === 'node' && !(await isNativeRuntimeAvailable())) {
+      if (nodeStatus) renderNodeStatus()
+      return
+    }
+    setRuntime(next, { explicit: true })
+  })
+
+  runtimeSelect?.addEventListener('change', (e) => {
+    const value = (e.target as HTMLSelectElement).value as Runtime
+    setRuntime(value, { explicit: true })
+  })
+
+  setupDependenciesManager()
+}
+
+// Gestor de dependencias: lista, instala, actualiza y elimina paquetes npm en
+// el workspace nativo mediante el bridge de Tauri.
+function setupDependenciesManager() {
+  const listEl = $('#deps-list') as HTMLUListElement | null
+  const statusEl = $('#deps-status') as HTMLElement | null
+  const addName = $('#deps-add-name') as HTMLInputElement | null
+  const addVersion = $('#deps-add-version') as HTMLInputElement | null
+  const addButton = $('#deps-add-button') as HTMLButtonElement | null
+  const refreshButton = $('#deps-refresh-button') as HTMLButtonElement | null
+  const revealButton = $('#deps-reveal-button') as HTMLButtonElement | null
+  if (!listEl) return
+
+  let busy = false
+
+  const setStatus = (message: string, kind: 'info' | 'error' | 'ok' = 'info') => {
+    if (!statusEl) return
+    statusEl.textContent = message
+    statusEl.classList.toggle('error', kind === 'error')
+    statusEl.classList.toggle('ok', kind === 'ok')
+  }
+
+  const setBusy = (value: boolean) => {
+    busy = value
+    ;[addButton, refreshButton, revealButton].forEach((b) => b && (b.disabled = value))
+    listEl.classList.toggle('is-busy', value)
+  }
+
+  const renderList = (deps: Dependency[]) => {
+    listEl.innerHTML = ''
+    if (deps.length === 0) {
+      const empty = document.createElement('li')
+      empty.className = 'deps-empty'
+      empty.textContent = 'No dependencies installed yet.'
+      listEl.appendChild(empty)
+      return
+    }
+
+    for (const dep of deps) {
+      const item = document.createElement('li')
+      item.className = 'deps-item'
+
+      const info = document.createElement('div')
+      info.className = 'deps-item-info'
+      const name = document.createElement('span')
+      name.className = 'deps-name'
+      name.textContent = dep.name
+      const version = document.createElement('span')
+      version.className = 'deps-version'
+      version.textContent = dep.installed ? `v${dep.installed}` : dep.wanted ?? 'not installed'
+      info.append(name, version)
+
+      const actions = document.createElement('div')
+      actions.className = 'deps-item-actions'
+
+      const versionInput = document.createElement('input')
+      versionInput.type = 'text'
+      versionInput.className = 'deps-input deps-update-version'
+      versionInput.placeholder = 'version'
+      versionInput.autocomplete = 'off'
+      versionInput.spellcheck = false
+
+      const updateBtn = document.createElement('button')
+      updateBtn.type = 'button'
+      updateBtn.className = 'settings-action-button deps-update-btn'
+      updateBtn.textContent = 'Update'
+      updateBtn.addEventListener('click', () => {
+        void runOp(
+          () => updateDependency(dep.name, versionInput.value.trim() || 'latest'),
+          `Updating ${dep.name}…`,
+          `Updated ${dep.name}`,
+        )
+      })
+
+      const removeBtn = document.createElement('button')
+      removeBtn.type = 'button'
+      removeBtn.className = 'settings-action-button danger deps-remove-btn'
+      removeBtn.textContent = 'Remove'
+      removeBtn.addEventListener('click', () => {
+        void runOp(() => removeDependency(dep.name), `Removing ${dep.name}…`, `Removed ${dep.name}`)
+      })
+
+      actions.append(versionInput, updateBtn, removeBtn)
+      item.append(info, actions)
+      listEl.appendChild(item)
+    }
+  }
+
+  const refresh = async () => {
+    try {
+      const deps = await listDependencies()
+      renderList(deps)
+    } catch (err: any) {
+      setStatus(`Could not read dependencies: ${err?.message || err}`, 'error')
+    }
+  }
+
+  // Ejecuta una operación npm, refresca la lista y reporta el resultado.
+  const runOp = async (op: () => Promise<{ exit_code: number | null; stderr: string }>, pending: string, done: string) => {
+    if (busy) return
+    setBusy(true)
+    setStatus(pending)
+    try {
+      const result = await op()
+      if (result.exit_code === 0 || result.exit_code == null) {
+        setStatus(done, 'ok')
+      } else {
+        const detail = result.stderr.trim().split('\n').slice(-1)[0] || `exit code ${result.exit_code}`
+        setStatus(`npm failed: ${detail}`, 'error')
+      }
+    } catch (err: any) {
+      setStatus(`Error: ${err?.message || err}`, 'error')
+    } finally {
+      await refresh()
+      setBusy(false)
+    }
+  }
+
+  const handleAdd = () => {
+    const name = (addName?.value || '').trim()
+    if (!name) {
+      setStatus('Type a package name to install.', 'error')
+      addName?.focus()
+      return
+    }
+    const version = (addVersion?.value || '').trim()
+    void runOp(() => addDependency(name, version || undefined), `Installing ${name}…`, `Installed ${name}`).then(() => {
+      if (addName) addName.value = ''
+      if (addVersion) addVersion.value = ''
+    })
+  }
+
+  addButton?.addEventListener('click', handleAdd)
+  addName?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleAdd()
+  })
+  addVersion?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleAdd()
+  })
+  refreshButton?.addEventListener('click', () => void refresh())
+  revealButton?.addEventListener('click', () => {
+    void revealWorkspace().catch((err) => setStatus(`Error: ${err?.message || err}`, 'error'))
+  })
+
+  void refresh()
+}
+
+type ConsoleCollection = {
+  entries: Array<[string, any]>
+  open: string
+  closed: string
+  close: string
+}
+
+function getConsoleCollection(value: any): ConsoleCollection | null {
+  if (Array.isArray(value)) {
+    return {
+      entries: value.map((item, index) => [String(index), item]),
+      open: `Array(${value.length}) [`,
+      closed: `Array(${value.length}) […]`,
+      close: ']',
+    }
+  }
+
+  if (isSerializedConsoleValue(value)) {
+    if (value.__type === 'Set') {
+      return {
+        entries: value.__values.map((item, index) => [String(index), item]),
+        open: `Set(${value.__values.length}) {`,
+        closed: `Set(${value.__values.length}) {…}`,
+        close: '}',
+      }
+    }
+
+    if (value.__type === 'Map') {
+      return {
+        entries: value.__entries.map(([key, item]) => [formatConsoleValueText(key), item]),
+        open: `Map(${value.__entries.length}) {`,
+        closed: `Map(${value.__entries.length}) {…}`,
+        close: '}',
+      }
+    }
+
+    return null
+  }
+
+  if (value === null || typeof value !== 'object') return null
+
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) return null
+
+  return {
+    entries: Object.entries(value),
+    open: '{',
+    closed: '{…}',
+    close: '}',
+  }
+}
+
+function formatConsoleObjectKey(key: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(key) || /^\d+$/.test(key) ? key : JSON.stringify(key)
+}
+
+function createConsoleObjectTree(value: any, label?: string): HTMLElement {
+  const collection = getConsoleCollection(value)
+  if (!collection) {
+    const fallback = document.createElement('span')
+    appendFormattedValue(fallback, value)
+    return fallback
+  }
+
+  if (collection.entries.length === 0) {
+    const empty = document.createElement('span')
+    empty.className = 'log-object-empty'
+    if (label !== undefined) {
+      const key = document.createElement('span')
+      key.className = 'log-json-key'
+      key.textContent = `${formatConsoleObjectKey(label)}: `
+      empty.appendChild(key)
+    }
+    empty.appendChild(document.createTextNode(collection.open + collection.close))
+    return empty
+  }
+
+  const details = document.createElement('details')
+  details.className = 'log-object-tree'
+  details.open = true
+  details.addEventListener('click', (event) => event.stopPropagation())
+
+  const summary = document.createElement('summary')
+  summary.className = 'log-object-summary'
+
+  const chevron = document.createElement('span')
+  chevron.className = 'log-object-chevron'
+  chevron.setAttribute('aria-hidden', 'true')
+  chevron.textContent = '›'
+  summary.appendChild(chevron)
+
+  if (label !== undefined) {
+    const key = document.createElement('span')
+    key.className = 'log-json-key'
+    key.textContent = `${formatConsoleObjectKey(label)}: `
+    summary.appendChild(key)
+  }
+
+  const closed = document.createElement('span')
+  closed.className = 'log-object-closed'
+  closed.textContent = collection.closed
+  summary.appendChild(closed)
+
+  const open = document.createElement('span')
+  open.className = 'log-object-open'
+  open.textContent = collection.open
+  summary.appendChild(open)
+
+  details.appendChild(summary)
+
+  const body = document.createElement('div')
+  body.className = 'log-object-body'
+
+  for (const [keyText, item] of collection.entries) {
+    const nestedCollection = getConsoleCollection(item)
+    if (nestedCollection) {
+      body.appendChild(createConsoleObjectTree(item, keyText))
+      continue
+    }
+
+    const row = document.createElement('div')
+    row.className = 'log-object-field'
+
+    const key = document.createElement('span')
+    key.className = 'log-json-key'
+    key.textContent = `${formatConsoleObjectKey(keyText)}: `
+    row.appendChild(key)
+    appendFormattedValue(row, item)
+    body.appendChild(row)
+  }
+
+  const closing = document.createElement('div')
+  closing.className = 'log-object-closing'
+  closing.textContent = collection.close
+  body.appendChild(closing)
+
+  details.appendChild(body)
+  return details
+}
+
 // Añadir valor formateado al contenedor con syntax highlighting
 function appendFormattedValue(container: HTMLElement, value: any) {
+  const collection = getConsoleCollection(value)
+  if (collection && !Array.isArray(value)) {
+    container.appendChild(createConsoleObjectTree(value))
+    return
+  }
+
   // Manejar valores serializados especiales del worker (promesas, funciones, etc.)
   if (isSerializedConsoleValue(value)) {
     const span = document.createElement('span')
@@ -1823,11 +3163,7 @@ function appendFormattedValue(container: HTMLElement, value: any) {
     } else {
       // Objetos normales (no arrays)
       try {
-        const json = JSON.stringify(value, null, 2)
-        const pre = document.createElement('pre')
-        pre.className = 'log-object'
-        pre.innerHTML = syntaxHighlightJSON(json)
-        container.appendChild(pre)
+        container.appendChild(createConsoleObjectTree(value))
       } catch {
         const span = document.createElement('span')
         span.className = 'log-object'
@@ -1838,29 +3174,6 @@ function appendFormattedValue(container: HTMLElement, value: any) {
   } else {
     container.appendChild(document.createTextNode(String(value)))
   }
-}
-
-// Syntax highlighting para JSON
-function syntaxHighlightJSON(json: string): string {
-  return json.replace(
-    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
-    (match) => {
-      let cls = 'log-json-number'
-      if (/^"/.test(match)) {
-        if (/:$/.test(match)) {
-          cls = 'log-json-key'
-          match = match.slice(0, -1) // Remover el ':'
-        } else {
-          cls = 'log-json-string'
-        }
-      } else if (/true|false/.test(match)) {
-        cls = 'log-json-boolean'
-      } else if (/null/.test(match)) {
-        cls = 'log-json-null'
-      }
-      return `<span class="${cls}">${match}</span>` + (cls === 'log-json-key' ? ':' : '')
-    },
-  )
 }
 
 // Crear elemento de tabla HTML para console.table
@@ -2039,8 +3352,7 @@ function clearEditorHighlight() {
 async function start() {
   window.addEventListener('pagehide', teardownApp, { once: true })
 
-  // Inicializar Prettier worker
-  initPrettierWorker()
+  // Prettier se carga bajo demanda en la primera llamada a formatCode()
 
   await initEditor()
   await refreshChromePromptApiModelAvailability()
@@ -2462,8 +3774,9 @@ async function start() {
     fontFamilySelect?.addEventListener('change', (e) => {
       const fontFamily = (e.target as HTMLSelectElement).value
       currentSettings = updateSetting(currentSettings, 'fontFamily', fontFamily as any)
+      applyEditorLineHeightVar(currentSettings.fontSize)
       editor?.updateOptions({
-        fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`,
+        fontFamily: getEditorFontFamilyStack(),
       })
     })
 
@@ -2725,6 +4038,9 @@ async function start() {
   // Inicializar popovers del header
   initHeaderPopovers()
 
+  // Configurar el runtime nativo de Node.js (solo tiene efecto en desktop)
+  void setupNativeRuntimeUI()
+
   if (currentSettings.aiEnabled) {
     initChatbot()
   }
@@ -2753,14 +4069,107 @@ async function initChatbot() {
   const chatbotInput = $('#chatbot-input') as HTMLTextAreaElement
   const chatbotSend = $('#chatbot-send') as HTMLButtonElement
   const chatbotClear = $('#chatbot-clear') as HTMLButtonElement
+  const chatbotQueue = $('#chatbot-queue') as HTMLElement
+  const chatbotQueueToggle = $('#chatbot-queue-toggle') as HTMLButtonElement
+  const chatbotQueueLabel = $('#chatbot-queue-label') as HTMLElement
+  const chatbotQueueList = $('#chatbot-queue-list') as HTMLOListElement
 
-  if (!chatbotMessages || !chatbotInput || !chatbotSend || !chatbotClear) {
+  if (
+    !chatbotMessages ||
+    !chatbotInput ||
+    !chatbotSend ||
+    !chatbotClear ||
+    !chatbotQueue ||
+    !chatbotQueueToggle ||
+    !chatbotQueueLabel ||
+    !chatbotQueueList
+  ) {
     console.error('Chatbot elements not found')
     return
   }
 
-  const syncChatbotClearVisibility = (state = chatbot.getState()) => {
-    chatbotClear.hidden = !state.isReady
+  const syncChatbotClearVisibility = () => {
+    const hasConversation = !!chatbotMessages.querySelector('.chatbot-message, .agent-run')
+    chatbotClear.hidden = !hasConversation && chatQueue.length === 0
+  }
+
+  const resizeChatbotInput = () => {
+    chatbotInput.style.height = 'auto'
+    chatbotInput.style.height = chatbotInput.value ? `${chatbotInput.scrollHeight}px` : 'auto'
+  }
+
+  const syncComposerActionState = () => {
+    const hasMessage = chatbotInput.value.trim().length > 0
+    chatbotSend.disabled = !hasMessage
+    const label = agentBusy ? 'Add message to queue' : 'Send message'
+    chatbotSend.title = label
+    chatbotSend.setAttribute('aria-label', label)
+  }
+
+  const renderChatQueue = () => {
+    const count = chatQueue.length
+    chatbotQueue.hidden = count === 0
+    chatbotQueueLabel.textContent = `${count} Queued`
+    chatbotQueue.classList.toggle('collapsed', chatQueueCollapsed)
+    chatbotQueueToggle.setAttribute('aria-expanded', String(!chatQueueCollapsed))
+    chatbotQueueList.hidden = chatQueueCollapsed
+    chatbotQueueList.innerHTML = ''
+
+    chatQueue.forEach((item, index) => {
+      const row = document.createElement('li')
+      row.className = 'chatbot-queue-item'
+      row.dataset.queueId = item.id
+
+      const indicator = document.createElement('span')
+      indicator.className = 'chatbot-queue-indicator'
+      indicator.setAttribute('aria-hidden', 'true')
+
+      const copy = document.createElement('span')
+      copy.className = 'chatbot-queue-copy'
+      copy.textContent = item.message
+      copy.title = item.message
+
+      const actions = document.createElement('span')
+      actions.className = 'chatbot-queue-actions'
+
+      const actionSpecs = [
+        {
+          action: 'edit',
+          label: 'Edit queued message',
+          icon: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1l1-4Z"/>',
+          disabled: false,
+        },
+        {
+          action: 'prioritize',
+          label: 'Move queued message up',
+          icon: '<path d="M12 19V5"/><path d="m5 12l7-7l7 7"/>',
+          disabled: index === 0,
+        },
+        {
+          action: 'remove',
+          label: 'Remove queued message',
+          icon: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>',
+          disabled: false,
+        },
+      ] as const
+
+      actionSpecs.forEach(({ action, label, icon, disabled }) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = `chatbot-queue-action chatbot-queue-action--${action}`
+        button.dataset.queueAction = action
+        button.setAttribute('aria-label', label)
+        button.title = label
+        button.disabled = disabled
+        button.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>`
+        actions.appendChild(button)
+      })
+
+      row.append(indicator, copy, actions)
+      chatbotQueueList.appendChild(row)
+    })
+
+    syncChatbotClearVisibility()
   }
 
   const focusChatbotInput = () => {
@@ -2780,13 +4189,12 @@ async function initChatbot() {
 
     // Configurar listener de estado
     chatbot.setStateChangeListener((state: ChatbotState) => {
-      syncChatbotClearVisibility(state)
+      syncChatbotClearVisibility()
 
       // La carga del modelo es siempre en segundo plano (sin pantalla de carga). Si
       // un envío está esperando, reflejamos el progreso en el mensaje de estado.
       if (state.isInitializing && modelLoadStatusUpdater) {
-        const pct = Math.round(state.loadProgress)
-        modelLoadStatusUpdater(pct > 0 ? `Downloading model… ${pct}%` : 'Preparing model…')
+        modelLoadStatusUpdater(describeModelLoadStatus(state))
       }
 
       // El composer siempre es usable: se puede escribir aunque el modelo no esté
@@ -2796,7 +4204,7 @@ async function initChatbot() {
       const loadingElement = $('#chatbot-loading') as HTMLElement | null
       if (loadingElement) loadingElement.remove()
       chatbotInput.disabled = false
-      if (!agentBusy) chatbotSend.disabled = false
+      syncComposerActionState()
 
       updateComposerModelLabel()
       updateChatEmptyState()
@@ -2829,8 +4237,8 @@ async function initChatbot() {
 
     // Auto-resize del textarea
     chatbotInput.addEventListener('input', () => {
-      chatbotInput.style.height = 'auto'
-      chatbotInput.style.height = chatbotInput.scrollHeight + 'px'
+      resizeChatbotInput()
+      syncComposerActionState()
     })
 
     // Enviar mensaje con Enter (Shift+Enter para nueva línea)
@@ -2846,12 +4254,50 @@ async function initChatbot() {
       sendChatMessage()
     })
 
+    chatbotQueueToggle.addEventListener('click', () => {
+      chatQueueCollapsed = !chatQueueCollapsed
+      renderChatQueue()
+    })
+
+    chatbotQueueList.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-queue-action]')
+      const row = button?.closest<HTMLElement>('[data-queue-id]')
+      const id = row?.dataset.queueId
+      if (!button || !id) return
+
+      switch (button.dataset.queueAction) {
+        case 'edit': {
+          const result = takeQueuedMessageForEdit(chatQueue, id)
+          chatQueue = result.queue
+          if (result.item) {
+            chatbotInput.value = result.item.message
+            pendingSelection = result.item.selection
+            renderSelectionChip()
+            resizeChatbotInput()
+            syncComposerActionState()
+            focusChatbotInput()
+          }
+          break
+        }
+        case 'prioritize':
+          chatQueue = prioritizeQueuedMessage(chatQueue, id)
+          break
+        case 'remove':
+          chatQueue = removeQueuedMessage(chatQueue, id).queue
+          break
+      }
+
+      renderChatQueue()
+    })
+
     // Limpiar conversación
     chatbotClear.addEventListener('click', () => {
       chatbot.clearHistory()
+      chatQueue = []
+      renderChatQueue()
       if (chatbotMessages) {
         chatbotMessages.innerHTML = ''
-        syncChatbotClearVisibility(chatbot.getState())
+        syncChatbotClearVisibility()
         updateChatEmptyState()
         focusChatbotInput()
       }
@@ -2859,7 +4305,8 @@ async function initChatbot() {
   }
 
   const chatbotState = chatbot.getState()
-  syncChatbotClearVisibility(chatbotState)
+  syncChatbotClearVisibility()
+  renderChatQueue()
   updateComposerModelLabel()
   updateChatEmptyState()
 
@@ -2868,7 +4315,7 @@ async function initChatbot() {
   // mostrará "Preparing model…" / "Downloading model… X%".
   chatbotInput.disabled = false
   chatbotInput.readOnly = false
-  chatbotSend.disabled = false
+  syncComposerActionState()
 
   if (!chatbotState.isReady && !chatbotState.isInitializing) {
     // Precarga en segundo plano solo si no requiere descarga (modelo del sistema) o
@@ -2880,26 +4327,59 @@ async function initChatbot() {
     }
   }
 
-  // Función para enviar mensaje (el agente decide si solo responde o actúa sobre el código)
-  async function sendChatMessage() {
+  // Captura el composer. Si hay un turno activo, el mensaje espera en la cola;
+  // en caso contrario comienza a procesarse inmediatamente.
+  function sendChatMessage() {
     const message = chatbotInput.value.trim()
-    if (!message || agentBusy) {
+    if (!message) {
       focusChatbotInput()
       return
     }
 
-    agentBusy = true
-
-    // Contexto de la selección del editor (si hay), y limpiamos el chip.
-    const selectionContext = takePendingSelection()
-
-    // Mostrar el mensaje del usuario y limpiar el input
-    addChatMessage('user', message)
-    updateChatEmptyState()
+    const item: ChatQueueItem = {
+      id: `queued-message-${++queuedMessageSequence}`,
+      message,
+      selection: takePendingSelection(),
+    }
     chatbotInput.value = ''
-    chatbotInput.style.height = 'auto'
-    chatbotInput.readOnly = true
-    chatbotSend.disabled = true
+    resizeChatbotInput()
+    syncComposerActionState()
+
+    if (agentBusy) {
+      chatQueue = enqueueChatMessage(chatQueue, item)
+      chatQueueCollapsed = false
+      renderChatQueue()
+      focusChatbotInput()
+      return
+    }
+
+    void processAgentTurn(item)
+  }
+
+  function finishAgentTurn() {
+    agentBusy = false
+    modelLoadStatusUpdater = null
+    syncComposerActionState()
+
+    const next = dequeueChatMessage(chatQueue)
+    chatQueue = next.queue
+    renderChatQueue()
+
+    if (next.item) {
+      void processAgentTurn(next.item)
+    } else {
+      focusChatbotInput()
+    }
+  }
+
+  // Procesa exactamente un turno. Solo esta función añade el mensaje al historial.
+  async function processAgentTurn(item: ChatQueueItem) {
+    agentBusy = true
+    syncComposerActionState()
+
+    addChatMessage('user', item.message)
+    syncChatbotClearVisibility()
+    updateChatEmptyState()
 
     // Línea de estado dinámica al final de la conversación ("Planning next moves…",
     // "Editing the code…", "Running the code…", "Downloading model… X%").
@@ -2921,21 +4401,30 @@ async function initChatbot() {
     // Si el modelo aún no está listo, lo cargamos mostrando el progreso en el estado
     // ("Preparing model…" / "Downloading model… X%") en vez de una pantalla de carga.
     if (!chatbot.getState().isReady) {
-      showStatus('Preparing model…')
+      showStatus(describeModelLoadStatus(chatbot.getState()))
       modelLoadStatusUpdater = showStatus
       const ready = await ensureModelLoadedForChoice()
       modelLoadStatusUpdater = null
       if (!ready) {
         clearStatus()
-        addChatMessage(
-          'assistant',
-          'I could not load an AI model. Check your connection or pick another model in the selector.',
-        )
+        const realError = chatbot.getState().error
+        let failureMessage: string
+        if (isTauri()) {
+          // On the desktop we run inference natively (llama.cpp). A failure here
+          // is a download/startup problem, not WebGPU — surface the real cause.
+          failureMessage =
+            'I could not set up the local AI model (llama.cpp). Check your connection and disk space, then try again.'
+        } else if (typeof navigator === 'undefined' || !('gpu' in navigator)) {
+          // On the web WebLLM needs WebGPU; without it the model can never load.
+          failureMessage =
+            'Your browser does not support WebGPU, which is required to run the AI model. Try Chrome/Edge with hardware acceleration enabled.'
+        } else {
+          failureMessage =
+            'I could not load an AI model. Check your connection or pick another model in the selector.'
+        }
+        addChatMessage('assistant', realError ? `${failureMessage}\n\n\`${realError}\`` : failureMessage)
         updateChatEmptyState()
-        agentBusy = false
-        chatbotInput.readOnly = false
-        chatbotSend.disabled = false
-        focusChatbotInput()
+        finishAgentTurn()
         return
       }
     }
@@ -2995,33 +4484,74 @@ async function initChatbot() {
       ensureRunGroup()
 
       const card = document.createElement('div')
-      card.className = 'agent-card edit collapsed'
+      card.className = 'agent-card edit'
 
       const head = document.createElement('button')
       head.type = 'button'
       head.className = 'agent-card-head'
+      head.setAttribute('aria-expanded', 'true')
+
+      const language = editor?.getModel?.()?.getLanguageId?.() === 'javascript' ? 'javascript' : 'typescript'
+      const languageBadge = language === 'javascript' ? 'JS' : 'TS'
+      const activeTitle = getActiveTabTitle()
+      const fileName = /\.[a-z0-9]+$/i.test(activeTitle) ? activeTitle : `main.${language === 'javascript' ? 'js' : 'ts'}`
+      const stats = [
+        info.added > 0 ? `<span class="diff-add">+${info.added}</span>` : '',
+        info.removed > 0 ? `<span class="diff-del">−${info.removed}</span>` : '',
+      ].join('')
+
+      head.title = info.note || 'Edited the code'
       head.innerHTML = `
-        <svg class="agent-card-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4"/><path d="M13.5 6.5l4 4"/></svg>
-        <span class="agent-card-title">${escapeHtml(info.note || 'Edited the code')}</span>
-        <span class="agent-card-stats"><span class="diff-add">+${info.added}</span><span class="diff-del">−${info.removed}</span></span>
+        <span class="agent-file-badge agent-file-badge--${languageBadge.toLowerCase()}">${languageBadge}</span>
+        <span class="agent-card-title">${escapeHtml(fileName)}</span>
+        <span class="agent-card-stats">${stats}</span>
         <svg class="agent-card-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 9l6 6l6 -6"/></svg>`
 
-      const changed = info.lines.filter((line) => line.type !== 'ctx')
-      const shown = changed.slice(0, 80)
+      const changedIndexes = info.lines.flatMap((line, index) => (line.type === 'ctx' ? [] : [index]))
+      const previewIndexes = new Set<number>()
+      for (const index of changedIndexes) {
+        for (let contextIndex = Math.max(0, index - 1); contextIndex <= Math.min(info.lines.length - 1, index + 1); contextIndex++) {
+          previewIndexes.add(contextIndex)
+        }
+      }
+      const shownIndexes = [...previewIndexes].sort((a, b) => a - b).slice(0, 80)
       const diffEl = document.createElement('div')
       diffEl.className = 'agent-card-diff'
+      let previousIndex = -2
       diffEl.innerHTML =
-        shown
-          .map((line) => {
-            const cls = line.type === 'add' ? 'add' : 'del'
-            const num = line.type === 'add' ? line.newLine : line.oldLine
-            const sign = line.type === 'add' ? '+' : '−'
-            return `<div class="diff-row ${cls}"><span class="diff-num">${num ?? ''}</span><span class="diff-sign">${sign}</span><span class="diff-code">${escapeHtml(line.text) || ' '}</span></div>`
+        shownIndexes
+          .map((index) => {
+            const line = info.lines[index]
+            const cls = line.type === 'ctx' ? 'ctx' : line.type
+            const num = line.type === 'del' ? line.oldLine : line.newLine
+            const sign = line.type === 'add' ? '+' : line.type === 'del' ? '−' : ''
+            const separator = index > previousIndex + 1 ? '<div class="diff-separator" aria-hidden="true">···</div>' : ''
+            previousIndex = index
+            return `${separator}<div class="diff-row ${cls}"><span class="diff-num">${num ?? ''}</span><span class="diff-sign">${sign}</span><span class="diff-code" data-diff-index="${index}">${escapeHtml(line.text) || ' '}</span></div>`
           })
           .join('') +
-        (changed.length > shown.length ? `<div class="diff-more">… ${changed.length - shown.length} more lines</div>` : '')
+        (previewIndexes.size > shownIndexes.length
+          ? `<div class="diff-more">… ${previewIndexes.size - shownIndexes.length} more lines</div>`
+          : '')
 
-      head.addEventListener('click', () => card.classList.toggle('collapsed'))
+      const colorizeDiff = async () => {
+        const codeElements = diffEl.querySelectorAll<HTMLElement>('.diff-code[data-diff-index]')
+        await Promise.all(
+          [...codeElements].map(async (codeElement) => {
+            const index = Number(codeElement.dataset.diffIndex)
+            const line = info.lines[index]
+            if (!line || !monaco?.editor?.colorize) return
+            const highlighted = await monaco.editor.colorize(line.text || ' ', language, {})
+            if (codeElement.isConnected) codeElement.innerHTML = highlighted
+          }),
+        )
+      }
+      void colorizeDiff()
+
+      head.addEventListener('click', () => {
+        const collapsed = card.classList.toggle('collapsed')
+        head.setAttribute('aria-expanded', String(!collapsed))
+      })
       card.appendChild(head)
       card.appendChild(diffEl)
       runStepsEl?.appendChild(card)
@@ -3098,11 +4628,12 @@ async function initChatbot() {
           isStreaming: false,
           monaco,
           theme: currentSettings.theme,
-          fontFamily: `${currentSettings.fontFamily}, Menlo, Monaco, Courier New, monospace`,
+          fontFamily: getEditorFontFamilyStack(),
           fontSize: currentSettings.fontSize,
           lineHeight: calculateLineHeight(currentSettings.fontSize),
         }),
       )
+      syncChatbotClearVisibility()
       updateChatEmptyState()
       chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
     }
@@ -3114,9 +4645,12 @@ async function initChatbot() {
       },
       language: () => 'javascript',
       run: () => runCodeAndCollect(),
+      format: (code: string) => formatCode(code, currentSettings.prettier),
     }
 
-    const fullMessage = selectionContext ? `${selectionContext}\n\n${message}` : message
+    const fullMessage = item.selection
+      ? `${formatSelectionContext(item.selection)}\n\n${item.message}`
+      : item.message
 
     try {
       await runAgent(fullMessage, {
@@ -3136,14 +4670,11 @@ async function initChatbot() {
       clearStatus()
       addChatMessage('assistant', `Error: ${error?.message ?? String(error)}`)
     } finally {
-      agentBusy = false
       clearStatus()
       finalizeRunGroup()
       updateChatEmptyState()
       chatbotInput.disabled = false
-      chatbotInput.readOnly = false
-      chatbotSend.disabled = false
-      focusChatbotInput()
+      finishAgentTurn()
     }
   }
 
@@ -3166,6 +4697,7 @@ async function initChatbot() {
     messageDiv.appendChild(contentDiv)
 
     chatbotMessages.appendChild(messageDiv)
+    syncChatbotClearVisibility()
     chatbotMessages.scrollTo(0, chatbotMessages.scrollHeight)
   }
 

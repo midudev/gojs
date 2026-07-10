@@ -22,6 +22,10 @@ div[data-code-block='true'] {
   --color-success: #66bb6a;
   --color-error: #ef5350;
   --color-warning: #ffa726;
+  --color-info: #4fc3f7;
+  --model-strength-color: color-mix(in oklab, var(--color-accent) 72%, white 28%);
+  --model-selected-background: color-mix(in srgb, var(--color-accent) 15%, var(--color-bg-tertiary));
+  --model-selected-border: color-mix(in srgb, var(--color-accent) 32%, transparent);
 
   --surface-overlay-background: linear-gradient(135deg, rgba(2, 8, 13, 0.88), rgba(0, 0, 0, 0.74));
   --surface-panel-background: linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025)),
@@ -64,6 +68,7 @@ div[data-code-block='true'] {
   --surface-divider-color: color-mix(in srgb, var(--color-text-primary) 18%, transparent);
   --surface-hover-background: rgba(255, 255, 255, 0.06);
   --surface-active-background: rgba(255, 255, 255, 0.09);
+  --editor-line-hover-background: rgba(79, 195, 247, 0.15);
   --surface-scrollbar-track: transparent;
   --surface-scrollbar-thumb: color-mix(in srgb, var(--color-text-primary) 18%, transparent);
   --surface-scrollbar-thumb-hover: color-mix(in srgb, var(--color-text-primary) 30%, transparent);
@@ -75,6 +80,9 @@ div[data-code-block='true'] {
 }
 
 :root[data-theme-type='light'] {
+  --model-strength-color: color-mix(in oklab, var(--color-accent) 82%, black 18%);
+  --model-selected-background: color-mix(in srgb, var(--color-accent) 12%, white);
+  --model-selected-border: color-mix(in srgb, var(--color-accent) 26%, transparent);
   --surface-overlay-background: linear-gradient(135deg, rgba(248, 250, 252, 0.76), rgba(255, 255, 255, 0.82));
   --surface-panel-background: linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.64)),
     radial-gradient(circle at 70% -12%, color-mix(in srgb, var(--color-accent) 16%, transparent), transparent 34%),
@@ -447,11 +455,14 @@ body {
   height: 100%;
   flex: 1;
   overflow: hidden;
+  /* Mientras Monaco monta, el contenedor muestra ya el fondo del tema para que
+     no haya salto de color al aparecer el editor. */
+  background-color: var(--editor-background, var(--color-bg-primary));
 }
 
 /* Highlight de línea en el editor */
 .line-highlight {
-  background-color: rgba(79, 195, 247, 0.15) !important;
+  background-color: var(--editor-line-hover-background) !important;
   border-left: 1px solid var(--color-accent) !important;
   transition: background-color 0.2s ease;
 }
@@ -471,8 +482,8 @@ body {
   overflow-y: auto;
   scrollbar-gutter: stable;
   padding: 16px;
-  font-family: var(--font-mono);
-  font-size: 13px;
+  font-family: var(--editor-font-family, var(--font-mono));
+  font-size: var(--editor-font-size, 14px);
   line-height: var(--editor-line-height, 1.6);
   background-color: var(--editor-background, var(--color-bg-primary));
 }
@@ -486,84 +497,115 @@ body {
 .log-entry {
   /* Cada fila ocupa exactamente la altura de una línea del editor (var --editor-line-height)
      para quedar alineada 1:1 con la línea de código que la generó. El hueco entre logs se
-     consigue SIN cambiar esa altura: un borde vertical transparente + background-clip:
-     padding-box hace que el fondo (la "píldora") no llegue al borde y se vea a través de él
-     el fondo del panel. Así hay separación visual pero el pitch sigue siendo 1 línea. */
+     consigue sin cambiar esa altura: la capa visual se separa 2px por arriba y abajo,
+     mientras el pitch de la fila sigue siendo una línea. */
   box-sizing: border-box;
   min-height: var(--editor-line-height, 22px);
   padding: 0 12px;
-  border-block: 2px solid transparent;
-  background-clip: padding-box;
-  border-radius: 5px;
-  line-height: 1.25;
+  line-height: var(--editor-line-height, 22px);
   word-wrap: break-word;
   white-space: pre-wrap;
   background-color: transparent;
   display: flex;
   align-items: center;
   gap: 8px;
+  position: relative;
+  isolation: isolate;
   color: var(--console-text-primary, var(--color-text-primary));
   cursor: default;
-  transition: background-color 0.15s ease;
 
-  /* outline (no border) para no alterar la altura de la fila en hover */
-  &:hover {
-    outline: 1px solid var(--surface-border);
-    outline-offset: -3px;
+  /* El hover comparte exactamente el fondo del highlight de línea de Monaco. */
+  &::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    box-sizing: border-box;
+    background-color: transparent;
+    pointer-events: none;
+    transition: background-color 0.15s ease;
   }
 
-  &.log {
-    background-color: var(--surface-hover-background);
+  &:hover::before {
+    background-color: var(--editor-line-hover-background);
   }
 
-  &.info {
-    background-color: rgba(79, 195, 247, 0.05);
+  &:has(> .log-line-number)::before {
+    left: calc(12px + 4ch + 8px);
+  }
+
+  &.notice {
+    /* El aviso lleva texto largo + un botón: dejamos que crezca en vertical
+       en vez de forzar la altura de una sola línea del editor. */
+    min-height: 0;
+    padding: 10px 12px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    line-height: 1.5;
+  }
+
+  &.notice .log-content {
+    color: var(--console-text-primary, var(--color-text-primary));
+  }
+
+  .log-notice-action {
+    flex: 0 0 auto;
+    margin-top: 4px;
+    padding: 4px 12px;
+    border: 1px solid var(--color-accent);
+    border-radius: 6px;
+    background-color: transparent;
     color: var(--color-accent);
-  }
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
 
-  &.warn {
-    background-color: rgba(255, 167, 38, 0.05);
-    color: var(--color-warning);
-  }
-
-  &.error {
-    background-color: rgba(239, 83, 80, 0.05);
-    color: var(--color-error);
-  }
-
-  &.time {
-    background-color: rgba(156, 39, 176, 0.05);
-    color: #ba68c8;
-  }
-
-  &.count {
-    background-color: rgba(76, 175, 80, 0.05);
-    color: #81c784;
+    &:hover {
+      background-color: var(--color-accent);
+      color: #04121a;
+    }
   }
 
   &.table {
-    background-color: var(--surface-hover-background);
-    display: block;
-    padding: 12px;
+    display: grid;
+    grid-template-columns: 4ch minmax(0, 1fr);
+    column-gap: 8px;
+    padding: 0 12px 4px;
     position: relative;
   }
 
   &.table .log-line-number {
-    position: absolute;
-    top: 12px;
-    right: 12px;
+    position: static;
+    grid-column: 1;
+    grid-row: 1;
+    align-self: start;
+    width: auto;
     margin: 0;
-    padding-left: 0;
+    padding: 0 10px 0 0;
   }
 
-  .log-type {
-    display: inline-block;
-    font-size: 11px;
-    font-weight: 500;
-    text-transform: uppercase;
-    margin-right: 8px;
-    color: var(--console-text-secondary, var(--color-text-secondary));
-    opacity: 0.85;
+  &.info > .log-type-icon,
+  &.notice > .log-type-icon {
+    color: var(--color-info);
+  }
+
+  &.warn > .log-type-icon {
+    color: var(--color-warning);
+  }
+
+  &.error > .log-type-icon,
+  &.timeout > .log-type-icon {
+    color: var(--color-error);
+  }
+
+  &.time > .log-type-icon {
+    color: #ba68c8;
+  }
+
+  &.count > .log-type-icon {
+    color: #81c784;
   }
 
   .log-content {
@@ -572,13 +614,46 @@ body {
   }
 }
 
-.log-line-number {
-  margin-left: auto;
-  padding-left: 16px;
-  font-size: 11px;
+.log-type-icon {
+  position: absolute;
+  top: calc((var(--editor-line-height, 22px) - 12px) / 2);
+  left: 0;
+  width: 12px;
+  height: 12px;
   color: var(--console-text-secondary, var(--color-text-secondary));
-  opacity: 0.6;
-  font-weight: 500;
+  pointer-events: none;
+}
+
+.log-type-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.log-entry.notice > .log-type-icon {
+  top: 14px;
+}
+
+.log-line-number {
+  order: -1;
+  flex: 0 0 4ch;
+  box-sizing: border-box;
+  margin: 0;
+  padding-right: 10px;
+  color: var(--editor-line-number-foreground, var(--console-text-secondary));
+  font-family: var(--editor-font-family, var(--font-mono));
+  font-size: var(--editor-font-size, 14px);
+  font-style: normal;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: var(--editor-line-height, 22px);
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -621,14 +696,105 @@ body {
 
 .log-object {
   color: var(--console-text-primary, var(--color-text-primary));
-  margin: 4px 0;
-  padding: 8px;
-  background-color: var(--surface-hover-background);
-  border-radius: 4px;
-  border-left: 2px solid var(--theme-string, rgba(206, 145, 120, 0.3));
-  font-family: var(--font-mono);
+  margin: 0;
+  padding: 0;
+  font-family: inherit;
   white-space: pre;
   overflow-x: auto;
+}
+
+.log-entry:has(.log-object-tree),
+.log-entry:has(.log-content--arguments) {
+  align-items: flex-start;
+}
+
+.log-entry:has(.log-object-tree) > .log-content,
+.log-content--arguments {
+  display: block;
+  min-width: 0;
+}
+
+.log-argument {
+  min-height: var(--editor-line-height, 22px);
+  line-height: var(--editor-line-height, 22px);
+}
+
+.log-object-tree {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+  color: var(--console-text-primary, var(--color-text-primary));
+  font-family: inherit;
+  min-width: 0;
+}
+
+.log-object-summary {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  min-height: var(--editor-line-height, 22px);
+  padding-right: 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.log-object-summary::-webkit-details-marker {
+  display: none;
+}
+
+.log-object-summary > .log-json-key {
+  margin-right: 0.5ch;
+}
+
+.log-object-chevron {
+  flex: 0 0 12px;
+  color: var(--console-text-secondary, var(--color-text-secondary));
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+  transition: transform 0.12s ease;
+}
+
+.log-object-tree[open] > .log-object-summary > .log-object-chevron {
+  transform: rotate(90deg);
+}
+
+.log-object-summary:hover {
+  background-color: var(--surface-hover-background);
+}
+
+.log-object-summary:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.log-object-open,
+.log-object-tree[open] > .log-object-summary .log-object-closed {
+  display: none;
+}
+
+.log-object-tree[open] > .log-object-summary .log-object-open {
+  display: inline;
+}
+
+.log-object-body {
+  margin-left: 12px;
+}
+
+.log-object-body > .log-object-field,
+.log-object-body > .log-object-empty,
+.log-object-body > .log-object-tree {
+  margin-left: 2ch;
+}
+
+.log-object-field,
+.log-object-empty,
+.log-object-closing {
+  min-height: var(--editor-line-height, 22px);
+  line-height: var(--editor-line-height, 22px);
+  white-space: pre-wrap;
 }
 
 /* JSON syntax highlighting - usa colores del tema del editor */
@@ -655,7 +821,9 @@ body {
 
 /* Console Table */
 .console-table-container {
-  margin-top: 8px;
+  grid-column: 2;
+  grid-row: 1;
+  margin-top: 2px;
   overflow-x: auto;
   width: 100%;
 }
@@ -663,35 +831,40 @@ body {
 .console-table {
   border-collapse: collapse;
   font-size: 12px;
-  width: 100%;
-  background-color: var(--editor-background, var(--color-bg-primary));
-  border: 1px solid var(--surface-border-strong);
-  border-radius: 4px;
+  width: auto;
+  min-width: min(100%, 360px);
+  max-width: 100%;
+  background-color: transparent;
+  border-block: 1px solid var(--surface-border);
 }
 
 .console-table thead {
-  background-color: rgba(0, 188, 212, 0.1);
+  background-color: transparent;
 }
 
 .console-table th {
-  padding: 8px 12px;
+  padding: 4px 8px;
   text-align: left;
   font-weight: 600;
-  border-bottom: 2px solid var(--surface-border-strong);
-  color: #00bcd4;
-  font-size: 11px;
+  border-bottom: 1px solid var(--surface-border);
+  color: color-mix(in srgb, #00bcd4 82%, var(--console-text-primary));
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.35px;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 .console-table td {
-  padding: 8px 12px;
+  padding: 3px 8px;
   border-bottom: 1px solid var(--surface-border);
   color: var(--console-text-primary, var(--color-text-primary));
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 .console-table tbody tr:hover {
-  background-color: rgba(0, 188, 212, 0.08);
+  background-color: var(--editor-line-hover-background);
 }
 
 .console-table tbody tr:last-child td {
@@ -701,7 +874,7 @@ body {
 .console-table .table-index {
   color: #00bcd4;
   font-weight: 500;
-  background-color: rgba(0, 188, 212, 0.05);
+  background-color: transparent;
 }
 
 /* Scrollbar */
@@ -1096,6 +1269,142 @@ body {
       var(--surface-control-background)
     ),
     var(--surface-control-background);
+}
+
+.setting-status.error {
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-border));
+  color: var(--color-error);
+}
+
+.setting-status.error::before {
+  background: var(--color-error);
+  box-shadow: 0 0 16px var(--color-error);
+}
+
+.setting-help.error {
+  color: var(--color-error);
+}
+
+.setting-help.ok {
+  color: var(--color-accent);
+}
+
+/* --- Runtime toggle (header) --- */
+.runtime-toggle {
+  width: auto;
+  gap: 6px;
+  padding-inline: 10px;
+}
+
+.runtime-toggle .runtime-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.runtime-toggle.is-node {
+  color: var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+/* --- Dependencies manager --- */
+.deps-add-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.deps-input {
+  flex: 1 1 160px;
+  min-width: 0;
+  appearance: none;
+  border: 1px solid var(--color-border);
+  background: var(--surface-control-background);
+  color: var(--color-text-primary);
+  border-radius: 12px;
+  padding: 10px 13px;
+  font-size: 13px;
+  font-family: var(--font-mono, var(--font-sans));
+}
+
+.deps-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.deps-input-version {
+  flex: 0 1 150px;
+}
+
+.deps-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deps-list.is-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.deps-empty {
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.deps-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--surface-card-background);
+  border: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.deps-item-info {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.deps-name {
+  font-weight: 700;
+  font-size: 13px;
+  font-family: var(--font-mono, var(--font-sans));
+}
+
+.deps-version {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.deps-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.deps-item-actions .deps-update-version {
+  flex: 0 0 96px;
+  padding: 7px 10px;
+}
+
+.deps-item-actions .settings-action-button {
+  padding: 8px 12px;
+  border-radius: 11px;
 }
 
 .setting-item,
@@ -1825,6 +2134,14 @@ body {
   background-color: var(--editor-background, var(--color-bg-primary));
 }
 
+/* En layout vertical cada panel ocupa una fila completa. El límite de 420px
+   solo tiene sentido cuando editor, consola y chat están uno junto a otro. */
+resize-panels[data-orientation='vertical'] > .chatbot-panel {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
 .chatbot-panel.hidden {
   display: none !important;
 }
@@ -1970,6 +2287,156 @@ body {
 
 .chatbot-panel.is-empty .chatbot-composer {
   order: 1;
+}
+
+/* Cola editable de instrucciones pendientes */
+.chatbot-queue {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0 16px;
+  overflow: hidden;
+  background-color: color-mix(in srgb, var(--surface-field-background) 88%, transparent);
+  border: 1px solid var(--surface-border-strong);
+  border-radius: 12px;
+}
+
+.chatbot-queue[hidden] {
+  display: none;
+}
+
+.chatbot-queue-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px 7px 12px;
+  color: var(--color-text-secondary);
+  font: 600 12px/1.3 var(--font-sans);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.chatbot-queue-toggle:hover {
+  color: var(--color-text-primary);
+  background-color: var(--surface-hover-background);
+}
+
+.chatbot-queue-toggle:focus-visible,
+.chatbot-queue-action:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.chatbot-queue-chevron {
+  flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.chatbot-queue.collapsed .chatbot-queue-chevron {
+  transform: rotate(-90deg);
+}
+
+.chatbot-queue-list {
+  max-height: min(22vh, 180px);
+  margin: 0;
+  padding: 0 6px 6px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.chatbot-queue-list[hidden] {
+  display: none;
+}
+
+.chatbot-queue-item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 5px 5px 5px 7px;
+  border-radius: 7px;
+}
+
+.chatbot-queue-item:hover,
+.chatbot-queue-item:focus-within {
+  background-color: var(--surface-hover-background);
+}
+
+.chatbot-queue-indicator {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid color-mix(in srgb, var(--color-text-secondary) 75%, transparent);
+  border-radius: 50%;
+}
+
+.chatbot-queue-copy {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chatbot-queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.chatbot-queue-item:hover .chatbot-queue-actions,
+.chatbot-queue-item:focus-within .chatbot-queue-actions {
+  opacity: 1;
+}
+
+.chatbot-queue-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.chatbot-queue-action:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background-color: var(--surface-active-background);
+}
+
+.chatbot-queue-action--remove:hover:not(:disabled) {
+  color: var(--color-error, #ef4444);
+}
+
+.chatbot-queue-action:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+resize-panels[data-orientation='vertical'] .chatbot-queue-list {
+  max-height: 120px;
+}
+
+@media (hover: none), (max-width: 520px) {
+  .chatbot-queue-actions {
+    opacity: 1;
+  }
+
+  .chatbot-queue {
+    margin-inline: 12px;
+  }
 }
 
 /* Grupo de trabajo del agente ("Worked for Xs" plegable, estilo Cursor) */
@@ -2420,7 +2887,7 @@ body {
   flex-direction: column;
   gap: 8px;
   margin: 12px 16px;
-  padding: 12px 12px 10px;
+  padding: 12px 16px 10px;
   background-color: var(--surface-field-background);
   border: 1px solid var(--surface-border-strong);
   border-radius: 16px;
@@ -2520,10 +2987,11 @@ body {
 
 .chatbot-input {
   width: 100%;
+  box-sizing: border-box;
   background: transparent;
   border: none;
   color: var(--color-text-primary);
-  padding: 2px 4px;
+  padding: 2px 0;
   font-size: 14px;
   line-height: 1.5;
   font-family: var(--font-sans);
@@ -2579,6 +3047,7 @@ body {
   gap: 4px;
   background: transparent;
   border: none;
+  margin-left: -6px;
   padding: 4px 6px;
   border-radius: 6px;
   color: var(--color-text-secondary);
@@ -2603,7 +3072,7 @@ body {
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
-  min-width: 240px;
+  min-width: 260px;
   max-width: 320px;
   max-height: 280px;
   overflow-y: auto;
@@ -2617,6 +3086,18 @@ body {
 
 .chatbot-model-menu[hidden] {
   display: none;
+}
+
+.chatbot-model-menu-status {
+  padding: 10px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.chatbot-model-menu-status--error {
+  color: var(--color-error);
 }
 
 /* Con el composer arriba (estado vacío) el menú se abre hacia abajo para no cortarse */
@@ -2657,10 +3138,181 @@ body {
   color: var(--color-text-secondary);
 }
 
-.chatbot-model-option.selected .chatbot-model-option-name::after {
-  content: '✓';
-  color: var(--color-accent);
+/* --- Selector nativo (escritorio): solo tamaño + nivel de inteligencia --- */
+.chatbot-model-menu:is(.chatbot-model-menu--native, .chatbot-model-menu--visual) {
+  min-width: 268px;
+}
+
+.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual) {
+  flex-direction: row;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 11px;
+}
+
+.chatbot-model-option--visual {
+  align-items: baseline;
+}
+
+.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual).selected {
+  background-color: var(--model-selected-background);
+  box-shadow: inset 0 0 0 1px var(--model-selected-border);
+}
+
+/* Nombre del nivel: la etiqueta principal, nunca el nombre técnico del modelo. */
+.chatbot-model-tier {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* En el desplegable damos ancho fijo al nombre para que los puntos alineen */
+.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual) .chatbot-model-tier {
+  min-width: 68px;
+}
+
+/* Lo que ocupa el modelo en disco: secundario, junto a la puntuación */
+.chatbot-model-size {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+  color: var(--color-text-secondary);
+}
+
+/* En el desplegable el tamaño se alinea a la derecha */
+.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual) .chatbot-model-size {
   margin-left: auto;
+}
+
+/* …salvo cuando está el indicador de descargado, que queda pegado al tamaño */
+.chatbot-model-option:is(.chatbot-model-option--native, .chatbot-model-option--visual)
+  .chatbot-model-size
+  + .chatbot-model-downloaded {
+  margin-left: -5px;
+}
+
+/* Medidor de inteligencia: tres puntos que se rellenan según capacidad */
+.chatbot-iq {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chatbot-iq-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--surface-border-strong);
+  transition: background-color 0.15s ease;
+}
+
+.chatbot-iq-dot.on {
+  background: var(--model-strength-color);
+}
+
+/* En web el razonamiento se lee como una pequeña señal ascendente de cuatro niveles. */
+.chatbot-model-option--visual .chatbot-iq,
+.chatbot-model-label--visual .chatbot-iq {
+  height: 12px;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.chatbot-model-option--visual .chatbot-iq-dot,
+.chatbot-model-label--visual .chatbot-iq-dot {
+  width: 4px;
+  height: 5px;
+  border-radius: 2px;
+}
+
+.chatbot-model-option--visual .chatbot-iq-dot:nth-child(2),
+.chatbot-model-label--visual .chatbot-iq-dot:nth-child(2) {
+  height: 7px;
+}
+
+.chatbot-model-option--visual .chatbot-iq-dot:nth-child(3),
+.chatbot-model-label--visual .chatbot-iq-dot:nth-child(3) {
+  height: 9px;
+}
+
+.chatbot-model-option--visual .chatbot-iq-dot:nth-child(4),
+.chatbot-model-label--visual .chatbot-iq-dot:nth-child(4) {
+  height: 12px;
+}
+
+.chatbot-model-option--visual .chatbot-iq-dot.on,
+.chatbot-model-label--visual .chatbot-iq-dot.on {
+  box-shadow: 0 0 7px color-mix(in srgb, var(--model-strength-color) 38%, transparent);
+}
+
+/* Marca de "ya descargado", visible junto al tamaño del modelo */
+.chatbot-model-downloaded {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--color-accent);
+}
+
+.chatbot-model-downloaded svg {
+  display: block;
+}
+
+/* La misma representación compacta en el disparador del composer */
+.chatbot-model-label--native {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.chatbot-model-label--visual {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.chatbot-model-label--visual .chatbot-model-tier,
+.chatbot-model-label--visual .chatbot-model-size {
+  font-size: 12.5px;
+}
+
+.chatbot-model-option--automatic {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 11px;
+}
+
+.chatbot-model-option--automatic.selected {
+  background-color: var(--model-selected-background);
+  box-shadow: inset 0 0 0 1px var(--model-selected-border);
+}
+
+.chatbot-model-option-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.chatbot-model-divider {
+  height: 1px;
+  margin: 4px 7px;
+  background: var(--surface-divider-color);
+}
+
+.chatbot-model-label--native .chatbot-model-size {
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.chatbot-model-label--native .chatbot-iq-dot {
+  width: 6px;
+  height: 6px;
 }
 
 /* Botón de enviar circular con el icono de flecha */
@@ -2698,9 +3350,9 @@ body {
 
 /* Tarjetas del agente (edición con diff / ejecución) */
 .agent-card {
-  background-color: color-mix(in srgb, var(--color-bg-secondary) 60%, transparent);
-  border: 1px solid var(--surface-border);
-  border-radius: 9px;
+  background-color: color-mix(in srgb, var(--color-bg-secondary) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-secondary) 24%, var(--surface-border));
+  border-radius: 12px;
   overflow: hidden;
   animation: agent-step-in 160ms ease;
 }
@@ -2721,10 +3373,11 @@ body {
 .agent-card.run {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  padding: 9px 11px;
-  font-size: 12.5px;
+  min-height: 46px;
+  padding: 10px 14px;
+  font-size: 14px;
   font-family: var(--font-sans);
   color: var(--color-text-primary);
   background: transparent;
@@ -2736,13 +3389,34 @@ body {
   cursor: pointer;
 }
 
+.agent-card-head:hover {
+  background-color: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+}
+
 .agent-card-icon {
   flex-shrink: 0;
   color: var(--color-text-secondary);
 }
 
+.agent-file-badge {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+}
+
+.agent-file-badge--ts {
+  color: #22d3ee;
+}
+
+.agent-file-badge--js {
+  color: #facc15;
+}
+
 .agent-card-title {
-  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-weight: 650;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2751,21 +3425,24 @@ body {
 .agent-card-stats {
   margin-left: auto;
   display: inline-flex;
-  gap: 8px;
+  gap: 7px;
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 650;
 }
 
 .diff-add {
-  color: #3fb950;
+  color: #3ddc84;
 }
 
 .diff-del {
-  color: #f85149;
+  color: #ff5577;
 }
 
 .agent-card-chevron {
   flex-shrink: 0;
+  margin-left: 2px;
   color: var(--color-text-secondary);
   transition: transform 0.15s ease;
 }
@@ -2782,62 +3459,80 @@ body {
 .agent-card-diff {
   max-height: 260px;
   overflow: auto;
-  padding: 6px 0;
+  padding: 7px 0;
   border-top: 1px solid var(--surface-border);
-  background-color: color-mix(in srgb, var(--color-bg-primary) 55%, transparent);
-  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
-  font-size: 12px;
-  line-height: 1.65;
+  background-color: color-mix(in srgb, var(--color-bg-primary) 68%, transparent);
+  font-family: var(--editor-font-family, var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace));
+  font-size: var(--editor-font-size, 13px);
+  line-height: var(--editor-line-height, 21px);
 }
 
 .diff-row {
   display: flex;
   align-items: flex-start;
-  padding-right: 12px;
+  min-width: max-content;
+  min-height: var(--editor-line-height, 21px);
+  padding-right: 14px;
+  border-left: 3px solid transparent;
   white-space: pre;
 }
 
 .diff-row.add {
-  background-color: color-mix(in srgb, #3fb950 13%, transparent);
+  background-color: color-mix(in srgb, #3ddc84 15%, transparent);
+  border-left-color: #3ddc84;
 }
 
 .diff-row.del {
-  background-color: color-mix(in srgb, #f85149 13%, transparent);
+  background-color: color-mix(in srgb, #ff5577 16%, transparent);
+  border-left-color: #ff5577;
 }
 
 .diff-num {
   flex: 0 0 auto;
-  width: 32px;
-  padding-right: 12px;
+  width: 48px;
+  padding-right: 11px;
   text-align: right;
-  color: var(--color-text-secondary);
-  opacity: 0.5;
+  color: var(--editor-line-number-foreground, var(--color-text-secondary));
+  opacity: 0.68;
   user-select: none;
 }
 
 .diff-sign {
   flex: 0 0 auto;
-  width: 14px;
+  width: 18px;
+  margin-right: 4px;
   text-align: center;
+  font-weight: 700;
   user-select: none;
 }
 
-.diff-row.add .diff-sign,
-.diff-row.add .diff-code {
-  color: #3fb950;
+.diff-row.add .diff-sign {
+  color: #3ddc84;
 }
 
-.diff-row.del .diff-sign,
-.diff-row.del .diff-code {
-  color: #f85149;
+.diff-row.del .diff-sign {
+  color: #ff5577;
 }
 
 .diff-code {
+  flex: 1 0 auto;
+  color: var(--color-text-primary);
   white-space: pre;
 }
 
+.diff-separator {
+  min-height: 18px;
+  padding-left: 69px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 18px;
+  letter-spacing: 0.15em;
+  opacity: 0.55;
+  user-select: none;
+}
+
 .diff-more {
-  padding: 4px 12px;
+  padding: 5px 14px 3px 69px;
   color: var(--color-text-secondary);
   font-style: italic;
 }
@@ -3064,4 +3759,275 @@ body {
 
 .chatbot-message-content .code-block::-webkit-scrollbar-thumb:hover {
   background: var(--surface-scrollbar-thumb-hover);
+}
+
+/* ─── Version history modal ──────────────────────────────────────────────── */
+
+.modal-subtitle {
+  max-width: 56ch;
+  margin: 6px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.history-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.history-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border: 1px solid var(--surface-control-border);
+  background: var(--surface-control-background);
+  color: var(--color-text-primary);
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.history-btn:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  background-color: var(--surface-control-hover-background);
+}
+
+.history-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.history-body {
+  display: block;
+  overflow-y: auto;
+  padding: 22px 28px 26px;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-empty {
+  margin: 24px auto;
+  max-width: 46ch;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.history-item {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--surface-control-background);
+  overflow: hidden;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.history-item:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 34%, var(--color-border));
+}
+
+.history-item.is-current {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+
+/* Cabecera compacta y clicable (estilo tarjeta del agente). */
+.history-item-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--color-text-primary);
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-item-head:hover {
+  background-color: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+}
+
+.history-item.is-unchanged .history-item-head {
+  cursor: default;
+}
+
+.history-item.is-unchanged .history-item-head:hover {
+  background-color: transparent;
+}
+
+.history-badge {
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-secondary) 22%, transparent);
+}
+
+.history-badge-manual {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+
+.history-badge-run {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+}
+
+.history-time {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.history-label {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item-stats {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.history-stat-initial,
+.history-stat-muted {
+  color: var(--color-text-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.history-current-tag {
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.history-item-chevron {
+  flex-shrink: 0;
+  margin-left: 2px;
+  color: var(--color-text-secondary);
+  transition: transform 0.15s ease;
+}
+
+.history-item.collapsed .history-item-chevron {
+  transform: rotate(-90deg);
+}
+
+.history-item.collapsed .history-item-diff {
+  display: none;
+}
+
+.history-item-diff {
+  border-top: 1px solid var(--surface-border);
+}
+
+.history-diff-direction {
+  padding: 8px 14px 4px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* El cuerpo del diff reutiliza `.agent-card-diff`; solo ajustamos el borde
+   superior porque ya lo aporta `.history-item-diff`. */
+.history-diff-body.agent-card-diff {
+  border-top: none;
+  background-color: transparent;
+}
+
+.history-item-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px 12px;
+}
+
+.history-item-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--surface-control-border);
+  background: transparent;
+  color: var(--color-text-primary);
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.history-item-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  background-color: var(--surface-control-hover-background);
+}
+
+.history-item-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.history-item-btn-danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-error) 55%, var(--color-border));
+  color: var(--color-error);
+}
+
+.history-item-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ─── Selección de texto en la app de escritorio (Tauri/WKWebView) ─────────
+   En macOS, Monaco solo habilita la selección de texto con la regla
+   `.monaco-editor.mac .view-line:hover { user-select: text }`. Ese workaround
+   de WebKit es poco fiable dentro del webview embebido de Tauri, y el resultado
+   es que en la app de escritorio no se puede seleccionar el código (en el
+   navegador sí funciona). Forzamos la selección de texto de forma
+   incondicional sobre el contenido del editor y de la consola para poder
+   seleccionar y copiar. No afecta al navegador (donde ya se podía). */
+.monaco-editor .view-lines,
+.monaco-editor .view-line,
+.output-content,
+.log-content,
+.log-entry {
+  -webkit-user-select: text !important;
+  user-select: text !important;
 }

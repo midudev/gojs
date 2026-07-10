@@ -14,6 +14,12 @@ type ParsedChatModelId = {
   quantization: string
 }
 
+export type ChatModelPresentation = {
+  level: 1 | 2 | 3 | 4
+  name: 'Small' | 'Medium' | 'Smart' | 'Smarter'
+  size: string
+}
+
 // Preferimos una sola variante por modelo: la más equilibrada para el navegador
 // (q4f16 = rápida y ligera). Así evitamos duplicar cada modelo en fast/more precise.
 const PREFERRED_QUANTIZATION_ORDER = ['q4f16', 'q4f32', 'q0f16', 'q0f32']
@@ -97,6 +103,27 @@ function getChatModelSizeLabel(modelId: string): string | null {
   if (parameterCount < 6) return 'balanced'
 
   return 'high quality'
+}
+
+export function getChatModelPresentation(model: ModelRecord): ChatModelPresentation {
+  const parsedModelId = parseChatModelId(model.model_id)
+  const parameterCount = parsedModelId ? Number.parseFloat(parsedModelId.modelSize) : Number.NaN
+  const size =
+    typeof model.vram_required_MB === 'number' ? `${(model.vram_required_MB / 1024).toFixed(1)} GB` : '—'
+
+  if (!Number.isFinite(parameterCount) || parameterCount < 1) {
+    return { level: 1, name: 'Small', size }
+  }
+
+  if (parameterCount < 3) {
+    return { level: 2, name: 'Medium', size }
+  }
+
+  if (parameterCount < 6) {
+    return { level: 3, name: 'Smart', size }
+  }
+
+  return { level: 4, name: 'Smarter', size }
 }
 
 export function getChatModelDisplayName(modelOrId: ModelRecord | string): string {

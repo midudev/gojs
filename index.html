@@ -14,6 +14,44 @@
   <link rel="icon" href="/gojs.webp" type="image/webp" />
   <meta name="theme-color" content="#0ea5e9" />
 
+  <!-- CSS crítico: pinta el fondo oscuro en el PRIMER frame para que el webview
+       no muestre un flash blanco antes de que cargue la hoja de estilos. -->
+  <style>
+    html { background-color: #121212; color-scheme: dark; }
+  </style>
+  <!-- Anti-flash de tema: antes de pintar, leemos el tema guardado y aplicamos
+       su color de fondo real, de modo que no haya salto oscuro→claro (ni al
+       revés) cuando el editor y su tema terminan de cargar. -->
+  <script>
+    (function () {
+      var BG = {
+        'vitesse-dark': ['#121212', 'dark'],
+        'vitesse-light': ['#ffffff', 'light'],
+        'github-dark': ['#24292e', 'dark'],
+        'github-light': ['#ffffff', 'light'],
+        'dracula': ['#282A36', 'dark'],
+        'monokai': ['#272822', 'dark'],
+        'nord': ['#2e3440', 'dark'],
+        'tokyo-night': ['#1a1b26', 'dark'],
+        'one-dark-pro': ['#282c34', 'dark']
+      }
+      try {
+        var theme = 'vitesse-dark'
+        var raw = localStorage.getItem('xjs-settings')
+        if (raw) {
+          var saved = JSON.parse(raw)
+          if (saved && typeof saved.theme === 'string' && BG[saved.theme]) theme = saved.theme
+        }
+        var entry = BG[theme]
+        var root = document.documentElement
+        root.style.setProperty('--editor-background', entry[0])
+        root.style.setProperty('--color-bg-primary', entry[0])
+        root.style.backgroundColor = entry[0]
+        root.style.colorScheme = entry[1]
+      } catch (e) {}
+    })()
+  </script>
+
   <!-- Open Graph -->
   <meta property="og:title" content="GoJS.app - JavaScript/TypeScript Playground" />
   <meta property="og:description" content="A modern JavaScript/TypeScript playground" />
@@ -115,6 +153,53 @@
             <path d="M9 13h6v7h-6z" />
           </svg>
         </button>
+        <button id="runtime-toggle-button" class="icon-button runtime-toggle" type="button" hidden
+          title="Runtime: Browser sandbox" aria-label="Switch execution runtime">
+          <svg id="runtime-browser-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11" />
+          </svg>
+          <svg id="runtime-node-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 256 292"
+            xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" style="display: none">
+            <defs>
+              <linearGradient id="nodejs__a" x1="68.188%" x2="27.823%" y1="17.487%" y2="89.755%">
+                <stop offset="0%" stop-color="#41873F" />
+                <stop offset="32.88%" stop-color="#418B3D" />
+                <stop offset="63.52%" stop-color="#419637" />
+                <stop offset="93.19%" stop-color="#3FA92D" />
+                <stop offset="100%" stop-color="#3FAE2A" />
+              </linearGradient>
+              <linearGradient id="nodejs__c" x1="43.277%" x2="159.245%" y1="55.169%" y2="-18.306%">
+                <stop offset="13.76%" stop-color="#41873F" />
+                <stop offset="40.32%" stop-color="#54A044" />
+                <stop offset="71.36%" stop-color="#66B848" />
+                <stop offset="90.81%" stop-color="#6CC04A" />
+              </linearGradient>
+              <linearGradient id="nodejs__f" x1="-4.389%" x2="101.499%" y1="49.997%" y2="49.997%">
+                <stop offset="9.192%" stop-color="#6CC04A" />
+                <stop offset="28.64%" stop-color="#66B848" />
+                <stop offset="59.68%" stop-color="#54A044" />
+                <stop offset="86.24%" stop-color="#41873F" />
+              </linearGradient>
+              <path id="nodejs__b"
+                d="M134.923 1.832c-4.344-2.443-9.502-2.443-13.846 0L6.787 67.801C2.443 70.244 0 74.859 0 79.745v132.208c0 4.887 2.715 9.502 6.787 11.945l114.29 65.968c4.344 2.444 9.502 2.444 13.846 0l114.29-65.968c4.344-2.443 6.787-7.058 6.787-11.945V79.745c0-4.886-2.715-9.501-6.787-11.944L134.923 1.832Z" />
+              <path id="nodejs__e"
+                d="M134.923 1.832c-4.344-2.443-9.502-2.443-13.846 0L6.787 67.801C2.443 70.244 0 74.859 0 79.745v132.208c0 4.887 2.715 9.502 6.787 11.945l114.29 65.968c4.344 2.444 9.502 2.444 13.846 0l114.29-65.968c4.344-2.443 6.787-7.058 6.787-11.945V79.745c0-4.886-2.715-9.501-6.787-11.944L134.923 1.832Z" />
+            </defs>
+            <path fill="url(#nodejs__a)"
+              d="M134.923 1.832c-4.344-2.443-9.502-2.443-13.846 0L6.787 67.801C2.443 70.244 0 74.859 0 79.745v132.208c0 4.887 2.715 9.502 6.787 11.945l114.29 65.968c4.344 2.444 9.502 2.444 13.846 0l114.29-65.968c4.344-2.443 6.787-7.058 6.787-11.945V79.745c0-4.886-2.715-9.501-6.787-11.944L134.923 1.832Z" />
+            <mask id="nodejs__d" fill="#fff"><use xlink:href="#nodejs__b" /></mask>
+            <path fill="url(#nodejs__c)"
+              d="M249.485 67.8 134.65 1.833c-1.086-.542-2.443-1.085-3.529-1.357L2.443 220.912c1.086 1.357 2.444 2.443 3.8 3.258l114.834 65.968c3.258 1.9 7.059 2.443 10.588 1.357L252.47 70.515c-.815-1.086-1.9-1.9-2.986-2.714Z"
+              mask="url(#nodejs__d)" />
+            <mask id="nodejs__g" fill="#fff"><use xlink:href="#nodejs__e" /></mask>
+            <path fill="url(#nodejs__f)"
+              d="M249.756 223.898c3.258-1.9 5.701-5.158 6.787-8.687L130.579.204c-3.258-.543-6.787-.272-9.773 1.628L6.786 67.53l122.979 224.238c1.628-.272 3.529-.815 5.158-1.63l114.833-66.239Z"
+              mask="url(#nodejs__g)" />
+          </svg>
+          <span id="runtime-label" class="runtime-label">JS</span>
+        </button>
         <a id="issue-button" class="icon-button" href="https://github.com/midudev/gojs-issues/issues/new"
           target="_blank" rel="noopener noreferrer" title="New issue">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -131,6 +216,14 @@
             <path d="M20 7l-3.75 2.4" />
           </svg>
         </a>
+        <button id="history-button" class="icon-button" title="Version history" aria-label="Version history">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M12 8l0 4l2 2" />
+            <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
+          </svg>
+        </button>
         <button id="settings-button" class="icon-button" title="Settings">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
@@ -177,6 +270,18 @@
             </button>
           </div>
           <div class="chatbot-messages" id="chatbot-messages"></div>
+          <section id="chatbot-queue" class="chatbot-queue" aria-labelledby="chatbot-queue-label" hidden>
+            <button id="chatbot-queue-toggle" class="chatbot-queue-toggle" type="button" aria-expanded="true"
+              aria-controls="chatbot-queue-list">
+              <span id="chatbot-queue-label" class="chatbot-queue-label" aria-live="polite">0 Queued</span>
+              <svg class="chatbot-queue-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                aria-hidden="true">
+                <path d="M6 9l6 6l6 -6" />
+              </svg>
+            </button>
+            <ol id="chatbot-queue-list" class="chatbot-queue-list"></ol>
+          </section>
           <div class="chatbot-composer">
             <div id="chatbot-context" class="chatbot-context" hidden></div>
             <textarea id="chatbot-input" class="chatbot-input"
@@ -220,6 +325,38 @@
     <div id="tooltip-settings" class="tooltip" popover="hint">Settings</div>
 
     <!-- Settings Modal -->
+    <div id="history-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="history-title"
+      aria-describedby="history-subtitle" aria-hidden="true" style="display: none">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <div>
+            <h2 id="history-title">Version history</h2>
+            <p id="history-subtitle" class="modal-subtitle"></p>
+          </div>
+          <div class="history-header-actions">
+            <button id="history-save" class="history-btn" type="button" title="Save the current code as a version">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" />
+                <path d="M12 14m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+                <path d="M14 4l0 4l-6 0l0 -4" />
+              </svg>
+              <span>Save version</span>
+            </button>
+            <button id="close-history" class="close-button" type="button" aria-label="Close history">×</button>
+          </div>
+        </div>
+        <div class="modal-body history-body">
+          <div id="history-list" class="history-list" role="list" aria-label="Saved versions"></div>
+          <p id="history-empty" class="history-empty" hidden>
+            No versions yet. A snapshot is saved every time your code runs, or when you click “Save version”.
+          </p>
+        </div>
+      </div>
+    </div>
+
     <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"
       aria-describedby="settings-description" aria-hidden="true" style="display: none">
       <div class="modal-overlay"></div>
@@ -267,6 +404,18 @@
                 <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
               </svg>
               <span>Advanced</span>
+            </button>
+            <button id="settings-tab-runtime" class="settings-tab" type="button" role="tab" aria-selected="false"
+              aria-controls="settings-panel-runtime" tabindex="-1" data-tab="runtime" hidden>
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+                <path d="M12 3l7.794 4.5v9l-7.794 4.5l-7.794 -4.5v-9z" />
+                <path d="M12 12l7.794 -4.5" />
+                <path d="M12 12l0 9" />
+                <path d="M12 12l-7.794 -4.5" />
+              </svg>
+              <span>Runtime</span>
             </button>
           </div>
           <div class="settings-content">
@@ -439,6 +588,50 @@
               <div class="setting-item-checkbox">
                 <input type="checkbox" id="setting-format-on-type" checked />
                 <label for="setting-format-on-type">Format on type</label>
+              </div>
+            </div>
+
+            <!-- Runtime Tab (desktop only) -->
+            <div id="settings-panel-runtime" class="settings-panel" role="tabpanel"
+              aria-labelledby="settings-tab-runtime" data-panel="runtime" hidden>
+              <div class="setting-group">
+                <div class="setting-group-header">
+                  <h3>Execution runtime</h3>
+                  <p>Choose where your code runs. Node.js runs it natively — real npm packages, filesystem and the
+                    full standard library.</p>
+                </div>
+                <div class="setting-item">
+                  <label for="setting-runtime">Runtime</label>
+                  <select id="setting-runtime">
+                    <option value="browser">Browser sandbox (Web Worker)</option>
+                    <option value="node">Node.js (native)</option>
+                  </select>
+                </div>
+                <div id="setting-node-status" class="setting-status">Checking Node.js runtime...</div>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-group-header">
+                  <h3>Dependencies</h3>
+                  <p>Packages installed with native <code>npm</code> into the GoJS workspace. Import them from your
+                    code just like a normal Node project.</p>
+                </div>
+                <div class="deps-add-row">
+                  <input type="text" id="deps-add-name" class="deps-input" placeholder="package name (e.g. lodash)"
+                    autocomplete="off" spellcheck="false" />
+                  <input type="text" id="deps-add-version" class="deps-input deps-input-version"
+                    placeholder="version (optional)" autocomplete="off" spellcheck="false" />
+                  <button id="deps-add-button" type="button" class="settings-action-button">Install</button>
+                </div>
+                <div id="deps-status" class="setting-help" aria-live="polite"></div>
+                <ul id="deps-list" class="deps-list" aria-live="polite">
+                  <li class="deps-empty">No dependencies installed yet.</li>
+                </ul>
+                <div class="setting-actions">
+                  <button id="deps-refresh-button" type="button" class="settings-action-button">Refresh</button>
+                  <button id="deps-reveal-button" type="button" class="settings-action-button">Open workspace
+                    folder</button>
+                </div>
               </div>
             </div>
           </div>

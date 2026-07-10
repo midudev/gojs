@@ -26,6 +26,13 @@ export type FontFamily = (typeof AVAILABLE_FONTS)[number]
 
 export type LayoutOrientation = 'horizontal' | 'vertical'
 
+// Where user code executes. 'browser' is the sandboxed web worker (works
+// everywhere); 'node' runs against the native Node.js runtime and is only
+// meaningful in the desktop app.
+export const RUNTIME_OPTIONS = ['browser', 'node'] as const
+
+export type Runtime = (typeof RUNTIME_OPTIONS)[number]
+
 export const RENDER_WHITESPACE_OPTIONS = ['none', 'boundary', 'selection', 'trailing', 'all'] as const
 
 export type RenderWhitespace = (typeof RENDER_WHITESPACE_OPTIONS)[number]
@@ -62,6 +69,10 @@ export interface EditorSettings {
   formatOnPaste: boolean
   formatOnType: boolean
   layoutOrientation: LayoutOrientation | null
+  runtime: Runtime
+  // Si el usuario ha elegido explícitamente el runtime. Cuando es false, el
+  // desktop puede aplicar su valor por defecto (Node.js) automáticamente.
+  runtimeExplicit: boolean
   prettier: PrettierSettings
 }
 
@@ -84,6 +95,8 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   formatOnPaste: true,
   formatOnType: true,
   layoutOrientation: null,
+  runtime: 'browser',
+  runtimeExplicit: false,
   prettier: {
     autoFormat: false,
     printWidth: 80,
@@ -144,6 +157,10 @@ function isValidLayoutOrientation(value: unknown): value is LayoutOrientation {
   return value === 'horizontal' || value === 'vertical'
 }
 
+function isValidRuntime(value: unknown): value is Runtime {
+  return RUNTIME_OPTIONS.includes(value as Runtime)
+}
+
 /**
  * Valida el modo de renderizado de espacios en blanco
  */
@@ -183,6 +200,8 @@ function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
     layoutOrientation: isValidLayoutOrientation(settings.layoutOrientation)
       ? settings.layoutOrientation
       : DEFAULT_SETTINGS.layoutOrientation,
+    runtime: isValidRuntime(settings.runtime) ? settings.runtime : DEFAULT_SETTINGS.runtime,
+    runtimeExplicit: validateBoolean(settings.runtimeExplicit, DEFAULT_SETTINGS.runtimeExplicit),
     prettier: {
       autoFormat: validateBoolean(prettierSettings.autoFormat, DEFAULT_SETTINGS.prettier.autoFormat),
       printWidth: validateNumber(prettierSettings.printWidth, 40, 200, DEFAULT_SETTINGS.prettier.printWidth),

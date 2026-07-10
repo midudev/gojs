@@ -160,6 +160,10 @@ class ResizePanels extends HTMLElement {
   }
 
   render() {
+    // Reflejar siempre la orientación efectiva, también cuando viene del
+    // responsive-config y no existe un atributo `orientation` explícito.
+    this.dataset.orientation = this.orientation
+
     const style = document.createElement('style')
     style.textContent = `
           :host {
