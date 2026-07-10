@@ -4,9 +4,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GoJS — Your JavaScript and TypeScript Lab</title>
+  <title>GoJS — JavaScript and TypeScript playground</title>
   <meta name="description"
-    content="Write, run, and understand JavaScript and TypeScript instantly. A fast playground with local AI, Node.js, and a desktop app for macOS, Windows, and Linux.">
+    content="A free, open-source JavaScript and TypeScript scratchpad with inline values, statement timings, real Node.js, and local AI.">
   <meta name="keywords" content="JavaScript, TypeScript, Playground, REPL, Monaco, Node.js, local AI">
   <meta name="author" content="midudev">
   <meta name="robots" content="index, follow">
@@ -19,7 +19,26 @@
        does not flash white before the stylesheet loads. -->
   <style>
     html { background-color: #121212; color-scheme: dark; }
+    html[data-shell='app'] #landing,
+    html[data-shell='landing'] #app { display: none !important; }
   </style>
+  <script>
+    (function () {
+      var isDesktop = '__TAURI_INTERNALS__' in window
+      var isPlaygroundRoute = location.pathname.indexOf('/app') === 0
+      document.documentElement.dataset.shell = isDesktop || isPlaygroundRoute ? 'app' : 'landing'
+    })()
+  </script>
+  <link id="landing-styles" rel="stylesheet" href="/src/landing.css" media="screen" />
+  <link id="app-styles" rel="stylesheet" href="/src/style.css" media="not all" />
+  <link rel="stylesheet" href="/src/fonts.css" />
+  <script>
+    (function () {
+      if (document.documentElement.dataset.shell !== 'app') return
+      document.getElementById('landing-styles').media = 'not all'
+      document.getElementById('app-styles').media = 'all'
+    })()
+  </script>
   <!-- Theme anti-flash: before painting, read the saved theme and apply its real
        background color so there is no dark-to-light (or light-to-dark) jump
        while the editor and its theme finish loading. -->
@@ -37,7 +56,8 @@
         'one-dark-pro': ['#282c34', 'dark']
       }
       try {
-        var isLandingEmbed = new URLSearchParams(location.search).get('embed') === 'landing'
+        var embedMode = new URLSearchParams(location.search).get('embed')
+        var isLandingEmbed = embedMode === 'landing' || embedMode === 'showcase'
         var theme = isLandingEmbed ? 'dracula' : 'vitesse-dark'
         var raw = localStorage.getItem('xjs-settings')
         if (raw && !isLandingEmbed) {
@@ -55,9 +75,9 @@
   </script>
 
   <!-- Open Graph -->
-  <meta property="og:title" content="GoJS — Your JavaScript and TypeScript Lab" />
+  <meta property="og:title" content="GoJS — Write JavaScript. See the Answer." />
   <meta property="og:description"
-    content="Code, console, and local AI in one lightning-fast playground. On the web or your desktop." />
+    content="A scratchpad that answers back. Inline values, timings, TypeScript, real Node.js, and local AI." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://gojs.app/" />
   <meta property="og:image" content="https://gojs.app/og.webp" />
@@ -66,9 +86,9 @@
 
   <!-- Twitter Cards -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="GoJS — Your JavaScript and TypeScript Lab" />
+  <meta name="twitter:title" content="GoJS — Write JavaScript. See the Answer." />
   <meta name="twitter:description"
-    content="Code, console, and local AI in one lightning-fast playground. On the web or your desktop." />
+    content="A scratchpad that answers back. Inline values, timings, TypeScript, real Node.js, and local AI." />
   <meta name="twitter:image" content="https://gojs.app/og.webp" />
 
   <!-- Structured Data -->
@@ -81,7 +101,7 @@
     "operatingSystem": "Web, macOS, Windows, Linux",
     "url": "https://gojs.app/",
     "image": "/gojs.webp",
-    "description": "A fast playground for writing, running, and understanding JavaScript and TypeScript with local AI and Node.js.",
+    "description": "A free, open-source JavaScript and TypeScript scratchpad with inline values, statement timings, real Node.js, and local AI.",
     "author": {
       "@type": "Person",
       "name": "midudev"
@@ -92,6 +112,243 @@
 
 <body>
   <div id="landing">
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="GoJS home">
+        <img src="/gojs.webp" alt="" width="34" height="34">
+        <span>gojs<span class="brand-cursor">_</span></span>
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <a href="#playground">Playground</a>
+        <a href="#features">Why GoJS</a>
+        <a href="#desktop">Desktop</a>
+        <a href="https://github.com/midudev/gojs" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <a class="nav-cta" href="/app/">Open app</a>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="hero-copy">
+          <p class="eyebrow reveal"><span></span> Free. Open source. Yours.</p>
+          <h1 id="hero-title" class="reveal reveal-delay-1">
+            Write JavaScript.<br><span>See the answer.</span>
+          </h1>
+          <p class="hero-description reveal reveal-delay-2">
+            A scratchpad that answers back. Values beside your code, timings on every statement,
+            TypeScript intelligence, real Node.js, and AI that runs locally.
+          </p>
+          <div class="hero-actions reveal reveal-delay-3">
+            <a class="button button-primary" href="/app/">Start coding <span aria-hidden="true">→</span></a>
+            <a id="download-cta" class="button button-secondary"
+              href="https://github.com/midudev/gojs/releases/latest" target="_blank" rel="noopener noreferrer">
+              <span id="download-label">Download for your system</span><span aria-hidden="true">↓</span>
+            </a>
+          </div>
+          <p id="download-meta" class="download-meta reveal reveal-delay-3">
+            No account · No license key · macOS, Windows, and Linux
+          </p>
+          <div class="hero-proof reveal reveal-delay-3" aria-label="GoJS principles">
+            <span>01 / instant feedback</span>
+            <span>02 / local-first</span>
+            <span>03 / MIT licensed</span>
+          </div>
+        </div>
+
+        <div class="product-stage reveal reveal-delay-2" id="playground">
+          <div class="stage-label" aria-hidden="true">LIVE / EDITABLE / REAL</div>
+          <div class="app-window">
+            <div class="demo-chrome">
+              <span class="traffic-lights"><i></i><i></i><i></i></span>
+              <strong><span class="live-dot"></span> GoJS playground</strong>
+              <a href="/app/">Open full app ↗</a>
+            </div>
+            <div id="showcase-loader" class="showcase-loader">
+              <div class="loader-code" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+              <p>Loading the real playground…</p>
+              <button id="showcase-load" type="button">Load interactive demo</button>
+            </div>
+            <iframe id="showcase-frame" class="live-app-frame" data-src="/app/?embed=showcase"
+              title="Interactive GoJS playground" loading="lazy"></iframe>
+          </div>
+          <p class="stage-note">Edit a number. The code runs. Every expression answers back.</p>
+        </div>
+      </section>
+
+      <section class="manifesto" aria-label="Product promise">
+        <p>NO LICENSE KEY.</p><p>NO CLOUD REQUIRED.</p><p>NO CONTEXT SWITCHING.</p>
+      </section>
+
+      <section class="language-support reveal" aria-labelledby="language-support-title">
+        <header>
+          <p class="section-kicker">ONE LAB. THE WHOLE ECOSYSTEM.</p>
+          <h2 id="language-support-title">JavaScript at the core.<br>Everything else <em>included.</em></h2>
+        </header>
+        <div class="language-logos">
+          <article class="language-item language-js">
+            <span>01</span>
+            <img src="/language-javascript.svg" alt="JavaScript" width="180" height="180">
+            <div><strong>JavaScript</strong><small>Instant browser sandbox</small></div>
+          </article>
+          <article class="language-item language-ts">
+            <span>02</span>
+            <img src="/language-typescript.svg" alt="TypeScript" width="180" height="180">
+            <div><strong>TypeScript</strong><small>Types and IntelliSense built in</small></div>
+          </article>
+          <article class="language-item language-node">
+            <span>03</span>
+            <img src="/language-nodejs.svg" alt="Node.js" width="180" height="205">
+            <div><strong>Node.js</strong><small>Native runtime on desktop</small></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="story" id="features" aria-labelledby="features-title">
+        <header class="section-heading reveal">
+          <p class="section-kicker">THE DISTANCE BETWEEN IDEA AND ANSWER: ZERO.</p>
+          <h2 id="features-title">A lab for the code<br>that is not a project <em>yet.</em></h2>
+        </header>
+
+        <article class="feature-row feature-inline reveal">
+          <div class="feature-index">01</div>
+          <div class="feature-copy">
+            <p class="feature-overline">BROWSER SANDBOX</p>
+            <h3>Every line<br>answers back.</h3>
+            <p>Top-level expressions reveal their values automatically. Statement timings live in the gutter.
+              No logging ritual. No guessing what happened.</p>
+          </div>
+          <div class="code-specimen" aria-label="Example of inline results">
+            <div class="specimen-head"><span>experiment.ts</span><span>AUTO-RUN · ON</span></div>
+            <ol>
+              <li><code><b>const</b> prices = [12, 19, 8]</code><output>0.1 ms</output></li>
+              <li><code>prices.map(n <i>=&gt;</i> n * 1.21)</code><output>[14.52, 22.99, 9.68]</output></li>
+              <li><code>Math.max(...prices)</code><output>19</output></li>
+              <li><code><b>new</b> Set(prices).size</code><output>3</output></li>
+            </ol>
+          </div>
+        </article>
+
+        <article class="feature-row feature-node reveal">
+          <div class="feature-index">02</div>
+          <div class="feature-copy">
+            <p class="feature-overline">GOJS DESKTOP</p>
+            <h3>Browser speed.<br><span>Real Node power.</span></h3>
+            <p>Start in an isolated Web Worker. Switch to the bundled Node.js 26 runtime when you need files,
+              processes, networking, or actual npm packages.</p>
+            <ul class="feature-points">
+              <li>Native filesystem access</li><li>A real npm workspace</li><li>macOS, Windows, and Linux</li>
+            </ul>
+          </div>
+          <div class="runtime-terminal">
+            <div class="runtime-tabs"><span>Browser</span><span class="active">Node.js 26</span></div>
+            <pre><code><i>import</i> { readFile } <i>from</i> <b>'node:fs/promises'</b>
+
+<i>const</i> packageJson = JSON.parse(
+  <i>await</i> readFile(<b>'./package.json'</b>, <b>'utf8'</b>)
+)
+
+packageJson.name</code></pre>
+            <div class="terminal-result"><span>↳</span> "my-experiment" <small>2.4 ms</small></div>
+          </div>
+        </article>
+
+        <article class="feature-row feature-ai reveal">
+          <div class="feature-index">03</div>
+          <div class="feature-copy">
+            <p class="feature-overline">LOCAL AI</p>
+            <h3>AI that stays<br>with <span>you.</span></h3>
+            <p>Explain, refactor, and fix code with on-device models. GoJS supports Chrome's Prompt API,
+              WebLLM in the browser, and llama.cpp on desktop.</p>
+            <p class="honesty-note">Model download requires a network connection once. Inference then happens on your machine.</p>
+          </div>
+          <div class="ai-specimen">
+            <div class="ai-orbit" aria-hidden="true"><i></i><span>✦</span></div>
+            <div class="ai-message">Make this function immutable and explain why.</div>
+            <div class="ai-status"><span></span> qwen coder · on device</div>
+            <div class="privacy-meter"><span>CODE SENT TO A SERVER</span><strong>0 bytes</strong></div>
+          </div>
+        </article>
+
+        <article class="feature-row feature-history reveal">
+          <div class="feature-index">04</div>
+          <div class="feature-copy">
+            <p class="feature-overline">WORKSPACE MEMORY</p>
+            <h3>Experiments<br>with a memory.</h3>
+            <p>Tabs survive reloads. Runs become versions. Compare a diff, restore an idea, and keep moving
+              without turning every thought into a repository.</p>
+          </div>
+          <div class="history-specimen">
+            <div><span class="commit-dot"></span><strong>Current</strong><small>just now</small><em>+4 −1</em></div>
+            <div><span class="commit-dot"></span><strong>Auto snapshot</strong><small>2 min ago</small><em>+8 −3</em></div>
+            <div><span class="commit-dot"></span><strong>First run</strong><small>8 min ago</small><em>initial</em></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="open-source-section reveal" aria-labelledby="open-title">
+        <div class="oss-mark" aria-hidden="true">{ }</div>
+        <div>
+          <p class="section-kicker">FREE MEANS FREE</p>
+          <h2 id="open-title">The best tool should not<br>be another subscription.</h2>
+          <p>Every feature. Every platform. No account and no artificial limits. Inspect the code,
+            report a bug, or build the feature you want next.</p>
+        </div>
+        <a class="github-card" href="https://github.com/midudev/gojs" target="_blank" rel="noopener noreferrer">
+          <span>github.com/midudev/gojs</span><strong>View the source</strong><i>MIT LICENSE ↗</i>
+        </a>
+      </section>
+
+      <section class="desktop-section reveal" id="desktop" aria-labelledby="desktop-title">
+        <div class="desktop-copy">
+          <p class="section-kicker">TAKE THE LAB WITH YOU</p>
+          <h2 id="desktop-title">Your machine.<br>Your runtime. <em>Your code.</em></h2>
+          <p>Go beyond the browser with native Node.js, npm, local files, and on-device AI.</p>
+          <div class="desktop-actions">
+            <a id="download-cta-bottom" class="button button-light"
+              href="https://github.com/midudev/gojs/releases/latest" target="_blank" rel="noopener noreferrer">
+              <span id="download-label-bottom">Download for your system</span><span aria-hidden="true">↓</span>
+            </a>
+            <a class="text-link" href="https://github.com/midudev/gojs/releases/latest" target="_blank"
+              rel="noopener noreferrer">All releases ↗</a>
+          </div>
+        </div>
+        <div class="platform-list" aria-label="Available operating systems">
+          <div>
+            <img src="/platform-apple.svg" alt="" width="28" height="34">
+            <strong>macOS</strong><small>Apple Silicon + Intel</small>
+          </div>
+          <div>
+            <img src="/platform-windows.svg" alt="" width="32" height="32">
+            <strong>Windows</strong><small>Windows 10 + 11</small>
+          </div>
+          <div>
+            <img src="/platform-linux.svg" alt="" width="32" height="37">
+            <strong>Linux</strong><small>AppImage · deb · rpm</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta reveal" aria-labelledby="final-title">
+        <p>READY WHEN YOU ARE.</p>
+        <h2 id="final-title">Your next scratch file<br>deserves better.</h2>
+        <a class="button button-primary button-large" href="/app/">Open GoJS <span aria-hidden="true">→</span></a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <a class="brand" href="/" aria-label="GoJS home">
+        <img src="/gojs.webp" alt="" width="28" height="28"><span>gojs_</span>
+      </a>
+      <p>Free and open source, built by <a href="https://midu.dev" target="_blank" rel="noopener noreferrer">midudev</a>.</p>
+      <div>
+        <a href="/app/">Web app</a>
+        <a href="https://github.com/midudev/gojs" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://github.com/midudev/gojs-issues/issues/new" target="_blank" rel="noopener noreferrer">Report a bug</a>
+      </div>
+    </footer>
+  </div>
+
+  <div id="landing-legacy" hidden>
     <header class="site-header">
       <a class="brand" href="/" aria-label="GoJS home">
         <img class="brand-mark" src="/gojs.webp" alt="" width="34" height="34">
@@ -151,7 +408,7 @@
               <strong>Live playground</strong>
               <a href="/app/" aria-label="Open this playground in a new page">Open full app ↗</a>
             </div>
-            <iframe class="live-app-frame" src="/app/?embed=landing" title="Interactive GoJS playground"
+            <iframe class="live-app-frame" data-src="/app/?embed=landing" title="Interactive GoJS playground"
               loading="eager"></iframe>
           </div>
         </div>
