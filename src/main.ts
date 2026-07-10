@@ -2538,10 +2538,13 @@ async function runCode() {
     const entry = document.createElement('div')
     entry.className = `log-entry ${type}`
 
+    const gutter = document.createElement('span')
+    gutter.className = 'log-gutter'
+
     // LOG y TABLE no necesitan icono; el resto se identifica en el gutter.
     if (type !== 'expression' && type !== 'log' && type !== 'table') {
       const typeIcon = createLogTypeIcon(type)
-      if (typeIcon) entry.appendChild(typeIcon)
+      if (typeIcon) gutter.appendChild(typeIcon)
     }
 
     // Si es una tabla, renderizar de forma especial
@@ -2575,7 +2578,7 @@ async function runCode() {
       lineSpan.textContent = String(lineNumber)
       lineSpan.dataset.lineNumber = String(lineNumber)
       lineSpan.setAttribute('aria-label', `Line ${lineNumber}`)
-      entry.prepend(lineSpan)
+      gutter.appendChild(lineSpan)
 
       // El número de línea se guarda en la entrada para que la delegación en
       // #output resuelva hover/click sin listeners por nodo.
@@ -2584,6 +2587,8 @@ async function runCode() {
       // Cambiar cursor a pointer para indicar que es clickeable
       entry.style.cursor = 'pointer'
     }
+
+    if (gutter.childElementCount > 0) entry.prepend(gutter)
 
     pendingLogNodes.push(entry)
     scheduleLogFlush()
