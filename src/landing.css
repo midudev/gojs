@@ -1131,6 +1131,7 @@ textarea {
 
 .platform-list {
   display: grid;
+  overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   background: var(--surface);
@@ -1168,8 +1169,8 @@ textarea {
 }
 
 .platform-list small {
-  color: var(--dim);
-  font: 500 9px/1 var(--display);
+  color: var(--muted);
+  font: 650 10px/1.2 var(--display);
 }
 
 .final-cta {
