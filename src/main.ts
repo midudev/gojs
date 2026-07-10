@@ -27,22 +27,18 @@ import {
 } from './storage'
 import { formatCode, destroyPrettierWorker } from './prettier'
 import {
-  injectExpressionLogging,
-  transformImports,
   transpileToJs,
   collectBareSpecifiers,
-  collectNodeBuiltinImports,
   buildImportMap,
-  lineMap,
 } from './console'
-import { injectTimings } from './timings'
+import { prepareCode, destroyCodePrepWorker } from './code-prep'
 import {
   formatConsoleValueText,
   isSerializedConsoleArguments,
   isSerializedConsoleValue,
 } from './console-values'
 import { initHeaderPopovers } from './popovers'
-import { initTabs, getActiveTabId, getActiveTabTitle } from './tabs'
+import { initTabs, getActiveTabId, getActiveTabTitle, flushTabsState } from './tabs'
 import {
   recordVersion,
   getHistory,
@@ -57,7 +53,7 @@ import { $, $$ } from './dom'
 import { chatbot, ChatbotState } from './chatbot'
 import './keyboard-events'
 import './resize-panels'
-import { createRoot } from 'react-dom/client'
+import { createRoot, type Root } from 'react-dom/client'
 import { ChatResponse } from './ChatResponse'
 import React from 'react'
 import { runAgent, type AgentBridge, type AgentEditInfo, type AgentRunResult } from './agent/agent'
@@ -172,6 +168,10 @@ function lineNumbersMinChars(): number {
 }
 
 let timingGutterEl: HTMLDivElement | null = null
+// Contenedor interior con las pastillas posicionadas en coordenadas de CONTENIDO
+// (no de viewport). Al hacer scroll solo trasladamos este contenedor, sin recrear
+// ni remedir nada.
+let timingGutterContentEl: HTMLDivElement | null = null
 
 function ensureTimingGutter(): HTMLDivElement | null {
   if (timingGutterEl && timingGutterEl.isConnected) return timingGutterEl
@@ -179,8 +179,12 @@ function ensureTimingGutter(): HTMLDivElement | null {
   if (!panel) return null
   const el = document.createElement('div')
   el.className = 'timing-gutter'
+  const content = document.createElement('div')
+  content.className = 'timing-gutter__content'
+  el.appendChild(content)
   panel.appendChild(el)
   timingGutterEl = el
+  timingGutterContentEl = content
   return el
 }
 
@@ -194,12 +198,31 @@ function scheduleTimingRender() {
   })
 }
 
+// Ruta ligera para el scroll: no remide geometría ni recrea etiquetas, solo
+// desplaza el contenido ya construido. Es lo que se ejecuta en cada frame de scroll.
+let timingScrollScheduled = false
+function scheduleTimingScroll() {
+  if (timingScrollScheduled) return
+  timingScrollScheduled = true
+  requestAnimationFrame(() => {
+    timingScrollScheduled = false
+    syncTimingScroll()
+  })
+}
+
+function syncTimingScroll() {
+  if (!editor || !timingGutterContentEl) return
+  if (timingGutterEl && timingGutterEl.style.display === 'none') return
+  timingGutterContentEl.style.transform = `translateY(${-editor.getScrollTop()}px)`
+}
+
 function renderTimingGutter() {
   if (!editor) return
   const gutter = ensureTimingGutter()
-  if (!gutter) return
+  if (!gutter || !timingGutterContentEl) return
 
-  gutter.textContent = ''
+  const content = timingGutterContentEl
+  content.textContent = ''
 
   const show = !!lineTimings && currentSettings.lineTimings && currentSettings.lineNumbers
   if (!show) {
@@ -233,7 +256,6 @@ function renderTimingGutter() {
   gutter.style.width = `${numbersRect.width}px`
   gutter.style.height = `${edRect.height}px`
 
-  const scrollTop = editor.getScrollTop()
   const model = editor.getModel()
   const lineCount = model ? model.getLineCount() : 0
   const lineHeight = lineCount >= 2 ? editor.getTopForLineNumber(2) - editor.getTopForLineNumber(1) : 19
@@ -244,10 +266,13 @@ function renderTimingGutter() {
   const numberDigits = String(Math.max(lineCount, 1)).length
   gutter.style.setProperty('--timing-reserve', `${8 + numberDigits * 8}px`)
 
+  // Construir todas las etiquetas una sola vez en coordenadas de contenido (sin
+  // restar scrollTop). El desplazamiento se aplica luego con un transform en el
+  // contenedor, de modo que el scroll no vuelva a tocar estos nodos.
+  const fragment = document.createDocumentFragment()
   for (const [line, ms] of lineTimings!) {
     if (ms < MIN_VISIBLE_MS || line < 1 || line > lineCount) continue
-    const top = editor.getTopForLineNumber(line) - scrollTop
-    if (top < -lineHeight || top > edRect.height) continue
+    const top = editor.getTopForLineNumber(line)
 
     const label = document.createElement('div')
     label.className = 'timing-gutter__label'
@@ -259,8 +284,12 @@ function renderTimingGutter() {
     pill.textContent = formatDuration(ms)
     label.appendChild(pill)
 
-    gutter.appendChild(label)
+    fragment.appendChild(label)
   }
+  content.appendChild(fragment)
+
+  // Colocar el contenido según el scroll actual.
+  content.style.transform = `translateY(${-editor.getScrollTop()}px)`
 }
 
 
@@ -299,6 +328,24 @@ let currentThemeData: EditorThemeData | null = null
 // Web Worker para ejecución de código con timeout
 let executorWorker: Worker | null = null
 let executionTimeoutId: number | null = null // Timer del hilo principal para timeout
+// Generación de ejecución en el navegador. La preparación de código es asíncrona
+// (worker), así que una ejecución puede quedar obsoleta si otra arranca mientras
+// tanto. Comparamos este contador para descartar resultados de ejecuciones viejas.
+let browserRunSeq = 0
+
+// Roots de React creados para respuestas del asistente. Los guardamos para poder
+// desmontarlos al limpiar la conversación o cerrar la app; si no, React retiene el
+// árbol montado (y sus efectos/recursos) indefinidamente.
+const chatResponseRoots = new Set<Root>()
+
+function unmountChatResponseRoots() {
+  for (const root of chatResponseRoots) {
+    try {
+      root.unmount()
+    } catch {}
+  }
+  chatResponseRoots.clear()
+}
 const EXECUTION_TIMEOUT = 2000 // 2 segundos de timeout por defecto
 // Timeout del runtime nativo de Node. Más holgado que el del navegador porque
 // el código nativo hace tareas legítimamente lentas (fetch, I/O, etc.), pero
@@ -580,6 +627,9 @@ function setupSelectionContext() {
   editor.onDidChangeCursorSelection(() => {
     const selection = editor.getSelection?.()
     if (!selection || selection.isEmpty?.()) {
+      // Navegar con el cursor (sin selección) no debe tocar el DOM salvo que
+      // hubiera un chip que limpiar.
+      if (pendingSelection === null) return
       pendingSelection = null
       renderSelectionChip()
       return
@@ -587,10 +637,23 @@ function setupSelectionContext() {
     const model = editor.getModel?.()
     const text = model?.getValueInRange(selection) ?? ''
     if (!text.trim()) return
+
+    const startLine = selection.startLineNumber
+    const endLine = selection.endLineNumber
+    // Si el rango y el texto no cambian, evitamos reconstruir el chip.
+    if (
+      pendingSelection &&
+      pendingSelection.startLine === startLine &&
+      pendingSelection.endLine === endLine &&
+      pendingSelection.text === text
+    ) {
+      return
+    }
+
     pendingSelection = {
       text,
-      startLine: selection.startLineNumber,
-      endLine: selection.endLineNumber,
+      startLine,
+      endLine,
       label: getActiveTabLabel(),
     }
     renderSelectionChip()
@@ -1160,9 +1223,21 @@ let loadedMonacoThemes: any[] = []
 // es casi solo referencias, así que hay que enumerar index + todas sus
 // referencias (donde viven las declaraciones `declare module "node:os"`, etc.).
 // La lista se genera desde el paquete instalado con `pnpm types:node`.
-const NODE_TYPES_URLS = NODE_TYPES_FILES.map(
-  (file) => `https://esm.sh/@types/node@${NODE_TYPES_VERSION}/${file}`,
-)
+//
+// Servimos esos .d.ts desde el propio bundle (mismo origen) en vez de hacer ~90
+// peticiones cross-origin a esm.sh: Vite emite cada fichero como asset y nos da su
+// URL local, lo que además funciona offline y es cacheable. Si por lo que sea un
+// fichero no resuelve localmente, caemos a esm.sh para no perder autocompletado.
+const NODE_TYPES_ASSET_URLS = import.meta.glob('/node_modules/@types/node/**/*.d.ts', {
+  query: '?url',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>
+
+const NODE_TYPES_URLS = NODE_TYPES_FILES.map((file) => {
+  const localUrl = NODE_TYPES_ASSET_URLS[`/node_modules/@types/node/${file}`]
+  return localUrl ?? `https://esm.sh/@types/node@${NODE_TYPES_VERSION}/${file}`
+})
 
 // Construye las opciones de `init()` con el import map derivado de los paquetes dados.
 function buildMonacoInitOptions(specifiers: string[]) {
@@ -1316,6 +1391,13 @@ async function initEditor() {
     // Re-ejecutar el código de la pestaña activa para refrescar la salida
     runCode()
   })
+
+  // initTabs asigna el modelo de la pestaña activa al editor, dejando el modelo
+  // inicial huérfano. Lo liberamos para no retener un modelo (+ su trabajo de LSP)
+  // que ya no está en uso.
+  if (editor.getModel?.() !== initialModel) {
+    initialModel.dispose()
+  }
 
   // Inicializar el modal de historial de versiones
   initHistoryModal()
@@ -1741,6 +1823,11 @@ async function changeTheme(themeName: Theme): Promise<boolean> {
   }
 }
 
+// Mientras aplicamos un formateo programático (executeEdits), el cambio de
+// contenido resultante no debe disparar otra ejecución automática: la propia
+// ejecución que pidió el formateo ya continúa después.
+let isFormatting = false
+
 // Configurar eventos del editor
 function setupEditorEvents() {
   // Escuchar cambios en el contenido del editor para ejecución automática
@@ -1750,6 +1837,7 @@ function setupEditorEvents() {
       // las líneas), así que los descartamos hasta la próxima ejecución.
       clearLineTimings()
 
+      if (isFormatting) return
       if (!autoRunEnabled) return
 
       // Limpiar el timer anterior
@@ -1763,9 +1851,10 @@ function setupEditorEvents() {
       }, currentSettings.debounceDelay)
     })
 
-    // Mantener la columna de tiempos alineada con el editor al hacer scroll o al
-    // cambiar el layout (redimensionar, plegar código, etc.).
-    editor.onDidScrollChange(() => scheduleTimingRender())
+    // Mantener la columna de tiempos alineada con el editor. El scroll solo
+    // traslada el contenedor (ruta ligera); el cambio de layout (redimensionar,
+    // plegar código, etc.) sí re-mide y reconstruye.
+    editor.onDidScrollChange(() => scheduleTimingScroll())
     editor.onDidLayoutChange(() => scheduleTimingRender())
   }
 }
@@ -1775,20 +1864,31 @@ async function formatEditorCode() {
   if (!editor) return
 
   try {
+    const model = editor.getModel?.()
     const code = editor.getValue()
     const formatted = await formatCode(code, currentSettings.prettier).catch(() => code)
 
-    if (formatted !== code) {
-      // Guardar posición del cursor
-      const position = editor.getPosition()
+    if (formatted === code || !model) return
 
-      // Actualizar el código
-      editor.setValue(formatted)
+    // Guardar posición del cursor
+    const position = editor.getPosition()
 
-      // Restaurar posición del cursor (aproximada)
-      if (position) {
-        editor.setPosition(position)
-      }
+    // Reemplazar el contenido con executeEdits (en vez de setValue): conserva la
+    // pila de undo y genera un único cambio, sin recrear el modelo. El flag evita
+    // que este cambio programe una ejecución automática duplicada.
+    isFormatting = true
+    try {
+      editor.executeEdits('format', [
+        { range: model.getFullModelRange(), text: formatted, forceMoveMarkers: true },
+      ])
+      editor.pushUndoStop?.()
+    } finally {
+      isFormatting = false
+    }
+
+    // Restaurar posición del cursor (aproximada)
+    if (position) {
+      editor.setPosition(position)
     }
   } catch (error) {
     console.error('Error formatting code:', error)
@@ -1821,9 +1921,14 @@ function teardownApp() {
     executionTimeoutId = null
   }
 
+  // Persistir cualquier cambio de pestaña pendiente (guardado con debounce).
+  flushTabsState()
+
+  unmountChatResponseRoots()
   executorWorker?.terminate()
   executorWorker = null
   destroyPrettierWorker()
+  destroyCodePrepWorker()
   void chatbot.destroy()
 
   editor?.dispose?.()
@@ -2339,9 +2444,13 @@ async function showNodeBuiltinNotice(outputElement: Element, specifiers: string[
 async function runCode() {
   if (!editor) return
 
+  // Marca esta ejecución. Si otra arranca durante un await, la actual se descarta.
+  const runId = ++browserRunSeq
+
   // Si auto-format está activado, formatear antes de ejecutar
   if (currentSettings.prettier.autoFormat) {
     await formatEditorCode()
+    if (runId !== browserRunSeq) return
   }
 
   const code = editor.getValue()
@@ -2359,8 +2468,38 @@ async function runCode() {
 
   const outputElement = $('#output')!
 
+  // Interacciones (hover/click) delegadas una sola vez en #output, en vez de
+  // añadir tres listeners por cada línea de log.
+  setupOutputInteractions(outputElement)
+
   // Limpiar salida anterior
   outputElement.innerHTML = ''
+
+  // Los logs de una ejecución pueden llegar en ráfagas (bucles). En vez de insertar
+  // un nodo por mensaje (un reflow cada vez), los acumulamos y los volcamos juntos
+  // con un DocumentFragment una vez por frame.
+  const pendingLogNodes: HTMLElement[] = []
+  let logFlushScheduled = false
+
+  const flushLogs = () => {
+    logFlushScheduled = false
+    // Ejecución superada: descartar nodos pendientes sin tocar el DOM.
+    if (runId !== browserRunSeq) {
+      pendingLogNodes.length = 0
+      return
+    }
+    if (pendingLogNodes.length === 0) return
+    const fragment = document.createDocumentFragment()
+    for (const node of pendingLogNodes) fragment.appendChild(node)
+    pendingLogNodes.length = 0
+    outputElement.appendChild(fragment)
+  }
+
+  const scheduleLogFlush = () => {
+    if (logFlushScheduled) return
+    logFlushScheduled = true
+    requestAnimationFrame(flushLogs)
+  }
 
   const addLog = (
     type: 'log' | 'info' | 'warn' | 'error' | 'time' | 'table' | 'count' | 'expression' | 'timeout',
@@ -2410,25 +2549,16 @@ async function runCode() {
       lineSpan.setAttribute('aria-label', `Line ${lineNumber}`)
       entry.prepend(lineSpan)
 
-      // Agregar eventos de hover para destacar la línea en el editor
-      entry.addEventListener('mouseenter', () => {
-        highlightEditorLine(lineNumber)
-      })
-
-      entry.addEventListener('mouseleave', () => {
-        clearEditorHighlight()
-      })
-
-      // Agregar evento de click para ir a la línea y hacer focus
-      entry.addEventListener('click', () => {
-        goToLineInEditor(lineNumber)
-      })
+      // El número de línea se guarda en la entrada para que la delegación en
+      // #output resuelva hover/click sin listeners por nodo.
+      entry.dataset.lineNumber = String(lineNumber)
 
       // Cambiar cursor a pointer para indicar que es clickeable
       entry.style.cursor = 'pointer'
     }
 
-    outputElement.appendChild(entry)
+    pendingLogNodes.push(entry)
+    scheduleLogFlush()
   }
 
   // Native Node.js runtime path (desktop only). Instead of the sandboxed
@@ -2450,30 +2580,32 @@ async function runCode() {
   }
 
   try {
-    // Transpilar TypeScript a JavaScript (solo type-stripping) antes de que acorn
-    // procese el código: acorn no entiende sintaxis TS. Preserva las líneas.
-    const jsCode = await transpileToJs(code)
+    // Preparar el código en un worker dedicado: transpila TypeScript, detecta
+    // módulos nativos de Node, reescribe imports, instrumenta tiempos e inyecta el
+    // logging de expresiones, calculando el lineMap. Así el hilo principal no hace
+    // varios `acorn.parse` ni Sucrase por ejecución.
+    const prepared = await prepareCode({
+      code,
+      lineTimings: currentSettings.lineTimings,
+      autoLogExpressions: currentSettings.autoLogExpressions,
+    })
+
+    // Si otra ejecución arrancó mientras preparábamos, abortamos esta para no
+    // pisar la salida ni lanzar un executor obsoleto.
+    if (runId !== browserRunSeq) return
 
     // Los módulos nativos de Node.js (`node:os`, `fs`, …) no existen en el sandbox
     // del navegador. Si intentamos importarlos, WKWebView falla al resolverlos y lo
     // reporta como un error críptico de CORS. Lo interceptamos aquí para mostrar un
     // mensaje claro y ofrecer cambiar al runtime de Node.js.
-    const nodeBuiltins = collectNodeBuiltinImports(jsCode)
-    if (nodeBuiltins.length > 0) {
-      await showNodeBuiltinNotice(outputElement, nodeBuiltins)
+    if (prepared.nodeBuiltins.length > 0) {
+      await showNodeBuiltinNotice(outputElement, prepared.nodeBuiltins)
       lastExecutionSignature = executionSignature
       return
     }
 
-    // Reescribir imports estáticos a import() dinámicos (permite ESM desde CDN)
-    const codeWithImports = transformImports(jsCode)
-
-    // Instrumentar los tiempos por línea (sin alterar el conteo de líneas). Debe ir
-    // antes del logging de expresiones para que su lineMap siga siendo correcto.
-    const codeWithTimings = currentSettings.lineTimings ? injectTimings(codeWithImports) : codeWithImports
-
-    // Inyectar logging de expresiones en el código
-    const modifiedCode = injectExpressionLogging(codeWithTimings, { enabled: currentSettings.autoLogExpressions })
+    const modifiedCode = prepared.code
+    const lineMapObj = prepared.lineMap
 
     // Recrear siempre el worker para cada ejecución. Así garantizamos un contexto
     // limpio y, sobre todo, matamos cualquier callback asíncrono (timers, promesas)
@@ -2481,8 +2613,10 @@ async function runCode() {
     // en la salida ya limpiada (ver issue #16).
     initExecutorWorker()
 
-    // Configurar manejo de mensajes del worker
+    // Configurar manejo de mensajes del worker. El handler descarta mensajes de
+    // ejecuciones ya superadas (comparando runId) por robustez ante solapamientos.
     executorWorker!.onmessage = (e: MessageEvent) => {
+      if (runId !== browserRunSeq) return
       const message = e.data
 
       switch (message.type) {
@@ -2555,15 +2689,12 @@ async function runCode() {
       initExecutorWorker()
     }
 
-    // Convertir lineMap a objeto plano para enviar al worker
-    const lineMapObj: Record<number, number> = {}
-    lineMap.forEach((value, key) => {
-      lineMapObj[key] = value
-    })
-
     // Configurar timeout desde el hilo principal (esto SÍ puede detener loops síncronos)
     if (EXECUTION_TIMEOUT > 0) {
       executionTimeoutId = window.setTimeout(() => {
+        // Una ejecución posterior ya tomó el relevo: no toques su worker/salida.
+        if (runId !== browserRunSeq) return
+
         // Mostrar mensaje de timeout
         addLog(
           'error',
@@ -2590,6 +2721,7 @@ async function runCode() {
       type: 'execute',
       code: modifiedCode,
       lineMap: lineMapObj,
+      runId,
     })
 
     // Guardar el código que acabamos de ejecutar
@@ -3298,7 +3430,7 @@ function formatCellValue(value: any): string {
 }
 
 // Destacar línea en el editor
-function highlightEditorLine(lineNumber: number) {
+function highlightEditorLine(lineNumber: number, reveal = false) {
   if (!editor || !monaco) return
 
   // Limpiar decoraciones anteriores
@@ -3313,8 +3445,11 @@ function highlightEditorLine(lineNumber: number) {
     },
   ])
 
-  // Hacer scroll suave a la línea
-  editor.revealLineInCenter(lineNumber, 0) // 0 = smooth scroll
+  // Solo desplazamos el editor cuando se pide explícitamente (p. ej. al hacer clic
+  // en un log). Al pasar el ratón por encima no queremos mover el viewport.
+  if (reveal) {
+    editor.revealLineInCenter(lineNumber, 0) // 0 = smooth scroll
+  }
 }
 
 // Ir a la línea en el editor y hacer focus
@@ -3346,6 +3481,40 @@ function goToLineInEditor(lineNumber: number) {
 function clearEditorHighlight() {
   if (!editor) return
   currentDecorations = editor.deltaDecorations(currentDecorations, [])
+}
+
+// Delegación de interacciones del panel de salida. Un único juego de listeners en
+// #output resuelve hover/click de cualquier log leyendo `data-line-number`, en vez
+// de registrar tres listeners por cada entrada (que se recrean en cada ejecución).
+let outputInteractionsAttached = false
+function setupOutputInteractions(output: HTMLElement) {
+  if (outputInteractionsAttached) return
+  outputInteractionsAttached = true
+
+  const lineOf = (target: EventTarget | null): number | null => {
+    const entry = (target as HTMLElement | null)?.closest?.('.log-entry') as HTMLElement | null
+    const raw = entry?.dataset.lineNumber
+    return raw ? Number(raw) : null
+  }
+
+  output.addEventListener('mouseover', (e) => {
+    const line = lineOf(e.target)
+    if (line !== null) highlightEditorLine(line)
+  })
+
+  output.addEventListener('mouseout', (e) => {
+    const entry = (e.target as HTMLElement | null)?.closest?.('.log-entry') as HTMLElement | null
+    if (!entry || !entry.dataset.lineNumber) return
+    // Ignorar transiciones entre hijos de la misma entrada.
+    const related = e.relatedTarget as HTMLElement | null
+    if (related && entry.contains(related)) return
+    clearEditorHighlight()
+  })
+
+  output.addEventListener('click', (e) => {
+    const line = lineOf(e.target)
+    if (line !== null) goToLineInEditor(line)
+  })
 }
 
 // Inicializar aplicación
@@ -4296,6 +4465,9 @@ async function initChatbot() {
       chatQueue = []
       renderChatQueue()
       if (chatbotMessages) {
+        // Desmontar los roots de React antes de vaciar el DOM para que liberen sus
+        // recursos en vez de quedar huérfanos.
+        unmountChatResponseRoots()
         chatbotMessages.innerHTML = ''
         syncChatbotClearVisibility()
         updateChatEmptyState()

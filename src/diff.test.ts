@@ -28,4 +28,39 @@ describe('computeLineDiff', () => {
     expect(del?.oldLine).toBe(2)
     expect(add?.newLine).toBe(2)
   })
+
+  it('handles a localized edit in a large file efficiently', () => {
+    const size = 20000
+    const base = Array.from({ length: size }, (_, i) => `line ${i}`)
+    const oldCode = base.join('\n')
+    const modified = base.slice()
+    modified[size / 2] = 'CHANGED'
+    const newCode = modified.join('\n')
+
+    const start = performance.now()
+    const diff = computeLineDiff(oldCode, newCode)
+    const elapsed = performance.now() - start
+
+    // Solo cambia una línea: 1 borrada + 1 añadida.
+    expect(diff.removed).toBe(1)
+    expect(diff.added).toBe(1)
+    // El resto es contexto; el total conserva todas las líneas.
+    const ctx = diff.lines.filter((line) => line.type === 'ctx').length
+    expect(ctx).toBe(size - 1)
+    // Con recorte de prefijo/sufijo esto debe ser prácticamente instantáneo; la
+    // versión cuadrática con tabla completa habría reservado ~400M celdas.
+    expect(elapsed).toBeLessThan(1000)
+  })
+
+  it('produces a valid LCS diff on a fully divergent middle', () => {
+    const oldCode = ['header', 'a', 'b', 'c', 'd', 'footer'].join('\n')
+    const newCode = ['header', 'w', 'x', 'y', 'z', 'footer'].join('\n')
+    const diff = computeLineDiff(oldCode, newCode)
+
+    expect(diff.removed).toBe(4)
+    expect(diff.added).toBe(4)
+    // Prefijo y sufijo comunes se conservan como contexto.
+    const ctxText = diff.lines.filter((l) => l.type === 'ctx').map((l) => l.text)
+    expect(ctxText).toEqual(['header', 'footer'])
+  })
 })

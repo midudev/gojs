@@ -4,18 +4,20 @@ import * as prettierPluginEstree from 'prettier/plugins/estree'
 import * as prettierPluginTypescript from 'prettier/plugins/typescript'
 
 export interface FormatRequest {
+  requestId: number
   code: string
   options: prettier.Options
 }
 
 export interface FormatResponse {
+  requestId: number
   formatted: string
   error?: string
 }
 
 // Escuchar mensajes del thread principal
 self.onmessage = async (e: MessageEvent<FormatRequest>) => {
-  const { code, options } = e.data
+  const { requestId, code, options } = e.data
 
   try {
     const formatted = await prettier.format(code, {
@@ -25,12 +27,14 @@ self.onmessage = async (e: MessageEvent<FormatRequest>) => {
     })
 
     const response: FormatResponse = {
+      requestId,
       formatted,
     }
 
     self.postMessage(response)
   } catch (error) {
     const response: FormatResponse = {
+      requestId,
       formatted: code, // Devolver el código original si hay error
       error: error instanceof Error ? error.message : String(error),
     }

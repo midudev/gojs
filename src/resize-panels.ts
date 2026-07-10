@@ -35,6 +35,13 @@ class ResizePanels extends HTMLElement {
   private startY: number = 0
   private startWidths: number[] = []
   private startHeights: number[] = []
+  // Estado del arrastre en curso, cacheado al empezar para no consultar
+  // getComputedStyle en cada mousemove.
+  private dragPairSum: number = 0
+  private dragLeftConstraints: { min: number; max: number } = { min: 50, max: Infinity }
+  private dragRightConstraints: { min: number; max: number } = { min: 50, max: Infinity }
+  private dragRafId: number | null = null
+  private dragPointer: number = 0
   private mutationObserver?: MutationObserver
   private layoutUpdateScheduled: boolean = false
   private onDividerMouseDownBound: (e: MouseEvent) => void
@@ -300,12 +307,25 @@ class ResizePanels extends HTMLElement {
     const index = parseInt(this.currentDivider.dataset.index || '0')
     this.currentPanelIndex = index
 
+    const leftPanel = this.panels[index]
+    const rightPanel = this.panels[index + 1]
+    const leftChild = this.getPanelChild(leftPanel) as HTMLElement
+    const rightChild = this.getPanelChild(rightPanel) as HTMLElement
+
+    // Cachear restricciones (getComputedStyle es costoso) una sola vez por arrastre.
+    this.dragLeftConstraints = leftChild ? this.getConstraints(leftChild) : { min: 50, max: Infinity }
+    this.dragRightConstraints = rightChild ? this.getConstraints(rightChild) : { min: 50, max: Infinity }
+
     if (this.isHorizontal) {
       this.startX = e.clientX
+      this.dragPointer = e.clientX
       this.startWidths = this.getCurrentSizes()
+      this.dragPairSum = this.startWidths[index] + this.startWidths[index + 1]
     } else {
       this.startY = e.clientY
+      this.dragPointer = e.clientY
       this.startHeights = this.getCurrentSizes()
+      this.dragPairSum = this.startHeights[index] + this.startHeights[index + 1]
     }
 
     document.body.style.cursor = this.isHorizontal ? 'col-resize' : 'row-resize'
@@ -405,79 +425,64 @@ class ResizePanels extends HTMLElement {
   onMouseMove(e: MouseEvent) {
     if (!this.isDragging) return
 
+    // Solo guardamos la posición del puntero y agrupamos el trabajo real en un
+    // único requestAnimationFrame por frame, evitando múltiples reflows por evento.
+    this.dragPointer = this.isHorizontal ? e.clientX : e.clientY
+    if (this.dragRafId !== null) return
+    this.dragRafId = requestAnimationFrame(() => {
+      this.dragRafId = null
+      this.applyDrag()
+    })
+  }
+
+  private applyDrag() {
+    if (!this.isDragging) return
+
     const index = this.currentPanelIndex
     const leftPanel = this.panels[index]
     const rightPanel = this.panels[index + 1]
+    if (!leftPanel || !rightPanel) return
 
-    if (this.isHorizontal) {
-      const delta = e.clientX - this.startX
-      const leftChild = this.getPanelChild(leftPanel) as HTMLElement
-      const rightChild = this.getPanelChild(rightPanel) as HTMLElement
+    const start = this.isHorizontal ? this.startX : this.startY
+    const startFirst = this.isHorizontal ? this.startWidths[index] : this.startHeights[index]
+    const delta = this.dragPointer - start
 
-      const leftConstraints = this.getConstraints(leftChild)
-      const rightConstraints = this.getConstraints(rightChild)
+    const leftConstraints = this.dragLeftConstraints
+    const rightConstraints = this.dragRightConstraints
+    const pairSum = this.dragPairSum
 
-      // Calcular nuevos tamaños propuestos
-      let newLeftWidth = this.startWidths[index] + delta
-      let newRightWidth = this.startWidths[index + 1] - delta
+    let newFirst = startFirst + delta
+    let newSecond = pairSum - newFirst
 
-      // Aplicar restricciones del panel izquierdo
-      if (newLeftWidth < leftConstraints.min) {
-        newLeftWidth = leftConstraints.min
-        newRightWidth = this.startWidths[index] + this.startWidths[index + 1] - newLeftWidth
-      } else if (newLeftWidth > leftConstraints.max) {
-        newLeftWidth = leftConstraints.max
-        newRightWidth = this.startWidths[index] + this.startWidths[index + 1] - newLeftWidth
-      }
-
-      // Aplicar restricciones del panel derecho
-      if (newRightWidth < rightConstraints.min) {
-        newRightWidth = rightConstraints.min
-        newLeftWidth = this.startWidths[index] + this.startWidths[index + 1] - newRightWidth
-      } else if (newRightWidth > rightConstraints.max) {
-        newRightWidth = rightConstraints.max
-        newLeftWidth = this.startWidths[index] + this.startWidths[index + 1] - newRightWidth
-      }
-
-      leftPanel.style.flex = `0 0 ${newLeftWidth}px`
-      rightPanel.style.flex = `0 0 ${newRightWidth}px`
-    } else {
-      const delta = e.clientY - this.startY
-      const leftChild = this.getPanelChild(leftPanel) as HTMLElement
-      const rightChild = this.getPanelChild(rightPanel) as HTMLElement
-
-      const topConstraints = this.getConstraints(leftChild)
-      const bottomConstraints = this.getConstraints(rightChild)
-
-      // Calcular nuevos tamaños propuestos
-      let newTopHeight = this.startHeights[index] + delta
-      let newBottomHeight = this.startHeights[index + 1] - delta
-
-      // Aplicar restricciones del panel superior
-      if (newTopHeight < topConstraints.min) {
-        newTopHeight = topConstraints.min
-        newBottomHeight = this.startHeights[index] + this.startHeights[index + 1] - newTopHeight
-      } else if (newTopHeight > topConstraints.max) {
-        newTopHeight = topConstraints.max
-        newBottomHeight = this.startHeights[index] + this.startHeights[index + 1] - newTopHeight
-      }
-
-      // Aplicar restricciones del panel inferior
-      if (newBottomHeight < bottomConstraints.min) {
-        newBottomHeight = bottomConstraints.min
-        newTopHeight = this.startHeights[index] + this.startHeights[index + 1] - newBottomHeight
-      } else if (newBottomHeight > bottomConstraints.max) {
-        newBottomHeight = bottomConstraints.max
-        newTopHeight = this.startHeights[index] + this.startHeights[index + 1] - newBottomHeight
-      }
-
-      leftPanel.style.flex = `0 0 ${newTopHeight}px`
-      rightPanel.style.flex = `0 0 ${newBottomHeight}px`
+    // Restricciones del primer panel
+    if (newFirst < leftConstraints.min) {
+      newFirst = leftConstraints.min
+      newSecond = pairSum - newFirst
+    } else if (newFirst > leftConstraints.max) {
+      newFirst = leftConstraints.max
+      newSecond = pairSum - newFirst
     }
+
+    // Restricciones del segundo panel
+    if (newSecond < rightConstraints.min) {
+      newSecond = rightConstraints.min
+      newFirst = pairSum - newSecond
+    } else if (newSecond > rightConstraints.max) {
+      newSecond = rightConstraints.max
+      newFirst = pairSum - newSecond
+    }
+
+    leftPanel.style.flex = `0 0 ${newFirst}px`
+    rightPanel.style.flex = `0 0 ${newSecond}px`
   }
 
   onMouseUp() {
     if (!this.isDragging) return
+
+    if (this.dragRafId !== null) {
+      cancelAnimationFrame(this.dragRafId)
+      this.dragRafId = null
+    }
 
     this.isDragging = false
     if (this.currentDivider) {
@@ -516,19 +521,40 @@ class ResizePanels extends HTMLElement {
       if (this.isDragging) return
 
       for (const mutation of mutations) {
-        if (mutation.type === 'childList' || mutation.type === 'attributes') {
+        if (mutation.type === 'childList') {
+          // Cambian los hijos directos: re-sincronizar observadores y layout.
+          this.reobserveChildren()
           this.scheduleLayoutUpdate()
-          break
+          return
+        }
+        if (mutation.type === 'attributes') {
+          this.scheduleLayoutUpdate()
+          return
         }
       }
     })
 
-    this.mutationObserver.observe(this, {
-      attributes: true,
-      attributeFilter: ['class', 'style', 'hidden'],
-      childList: true,
-      subtree: true,
-    })
+    this.reobserveChildren()
+  }
+
+  // Observa SOLO los hijos directos (paneles) y sus atributos de visibilidad, sin
+  // `subtree`. Antes se observaba todo el subárbol, incluido el DOM interno de
+  // Monaco, que muta continuamente (cursor, tokens, scroll) y disparaba un
+  // recálculo de layout con múltiples getBoundingClientRect en cada pulsación.
+  private reobserveChildren() {
+    if (!this.mutationObserver) return
+    this.mutationObserver.disconnect()
+
+    // Alta/baja de paneles (hijos directos del host).
+    this.mutationObserver.observe(this, { childList: true })
+
+    // Cambios de visibilidad de cada panel.
+    for (const child of Array.from(this.children)) {
+      this.mutationObserver.observe(child, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'hidden'],
+      })
+    }
   }
 
   scheduleLayoutUpdate() {

@@ -60,6 +60,33 @@ function saveState() {
   } catch {}
 }
 
+// Persistir es costoso (JSON.stringify de todas las pestañas) y no hace falta
+// hacerlo en cada tecla: lo agrupamos con un debounce. Las acciones estructurales
+// (crear/cerrar/cambiar/renombrar pestaña) fuerzan un flush inmediato.
+const SAVE_DEBOUNCE_MS = 500
+let saveTimer: number | null = null
+
+function scheduleSaveState() {
+  if (saveTimer !== null) return
+  saveTimer = window.setTimeout(() => {
+    saveTimer = null
+    saveState()
+  }, SAVE_DEBOUNCE_MS)
+}
+
+function flushSaveState() {
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  saveState()
+}
+
+/** Fuerza la persistencia pendiente (p. ej. al cerrar la app). */
+export function flushTabsState() {
+  flushSaveState()
+}
+
 function createModelForTab(t: Tab) {
   if (!monaco) return
   const uri = monaco.Uri.parse(`inmemory://models/${t.id}.ts`)
@@ -93,6 +120,7 @@ function render() {
   state.tabs.forEach((t) => {
     const tabEl = document.createElement('button')
     tabEl.className = 'tab-item' + (t.id === state.activeId ? ' active' : '')
+    tabEl.dataset.tabId = t.id
     tabEl.title = getTabTitle(t)
 
     const nameEl = document.createElement('span')
@@ -162,12 +190,12 @@ function startEditingTabName(tab: Tab, nameEl: HTMLSpanElement) {
       // Guardar el nuevo nombre
       tab.name = input.value.trim()
       tab.updatedAt = Date.now()
-      saveState()
+      flushSaveState()
     } else if (save && !input.value.trim()) {
       // Si se vacía, eliminar el nombre personalizado
       delete tab.name
       tab.updatedAt = Date.now()
-      saveState()
+      flushSaveState()
     }
 
     // Volver a renderizar
@@ -217,7 +245,7 @@ export function newTab() {
   createModelForTab(tab)
   setActiveModel()
   render()
-  saveState()
+  flushSaveState()
   onTabActivated?.()
 }
 
@@ -254,7 +282,7 @@ export function closeTab(id: string) {
   ensureAtLeastOneTab()
   setActiveModel()
   render()
-  saveState()
+  flushSaveState()
   onTabActivated?.()
 }
 
@@ -263,7 +291,7 @@ export function switchTab(id: string) {
   state.activeId = id
   setActiveModel()
   render()
-  saveState()
+  flushSaveState()
   onTabActivated?.()
 }
 
@@ -275,8 +303,26 @@ export function updateActiveTabFromEditor() {
   active.content = text
   active.isDirty = true
   active.updatedAt = Date.now()
-  render()
-  saveState()
+  // Actualizar solo el título de la pestaña activa (no reconstruir toda la barra)
+  // y persistir con debounce para no bloquear el hilo en cada pulsación.
+  updateActiveTabTitle(active)
+  scheduleSaveState()
+}
+
+// Refresca in situ el texto del título de la pestaña activa cuando deriva de la
+// primera línea del código. Evita el `render()` completo (innerHTML + relisten)
+// en cada tecla.
+function updateActiveTabTitle(tab: Tab) {
+  if (tab.name) return // nombre personalizado: no depende del contenido
+  const container = document.querySelector('.tabs-container')
+  const nameEl = container?.querySelector(`[data-tab-id="${tab.id}"] .tab-name`) as HTMLElement | null
+  if (!nameEl) return
+  const title = getTabTitle(tab)
+  if (nameEl.textContent !== title) {
+    nameEl.textContent = title
+    const button = nameEl.closest('.tab-item') as HTMLElement | null
+    if (button) button.title = title
+  }
 }
 
 function restoreTabs() {
@@ -289,8 +335,11 @@ function restoreTabs() {
     ensureAtLeastOneTab()
   }
 
-  // Crear modelos
-  state.tabs.forEach((t) => createModelForTab(t))
+  // Crear el modelo solo para la pestaña activa. El resto se materializa de forma
+  // perezosa al activarse (setActiveModel), evitando construir N modelos Monaco
+  // (y su carga de tipos/LSP) en el arranque.
+  const active = state.tabs.find((t) => t.id === state.activeId)
+  if (active) createModelForTab(active)
 }
 
 export function initTabs(editorInstance: EditorLike, monacoInstance: MonacoLike, onActivated?: () => void) {

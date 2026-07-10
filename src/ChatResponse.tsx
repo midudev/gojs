@@ -67,16 +67,18 @@ function getLanguageLabel(language: string): string {
 }
 
 function MonacoCodeBlock({ children, className, monaco, theme, fontFamily, fontSize, lineHeight }: MonacoCodeBlockProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const editorRef = useRef<any>(null)
+  const codeRef = useRef<HTMLElement | null>(null)
   const copyTimerRef = useRef<number | null>(null)
   const [copied, setCopied] = useState(false)
   const isIncomplete = useIsCodeFenceIncomplete()
   const code = useMemo(() => stringifyCode(children), [children])
   const language = useMemo(() => getLanguage(className), [className])
   const lineCount = useMemo(() => Math.max(1, code.split(/\r\n|\r|\n/).length), [code])
-  const editorHeight = Math.min(420, Math.max(76, lineCount * lineHeight + 24))
   const languageLabel = getLanguageLabel(language)
+  // Evitamos temas no usados en el resaltado estático (colorize toma el tema activo).
+  void theme
+  void fontSize
+  void lineHeight
 
   useEffect(() => {
     return () => {
@@ -86,65 +88,33 @@ function MonacoCodeBlock({ children, className, monaco, theme, fontFamily, fontS
     }
   }, [])
 
+  // Resaltado estático con `monaco.editor.colorize`: genera HTML tokenizado sin
+  // crear una instancia de editor por bloque. Antes cada bloque de código de una
+  // respuesta abría un editor Monaco completo (readOnly), lo que disparaba el uso
+  // de memoria y CPU en conversaciones largas.
   useEffect(() => {
-    if (!monaco || !containerRef.current || isIncomplete) return
+    const el = codeRef.current
+    if (!el) return
 
-    const editor = monaco.editor.create(containerRef.current, {
-      value: code,
-      language,
-      theme,
-      fontFamily,
-      fontSize,
-      lineHeight,
-      readOnly: true,
-      domReadOnly: true,
-      automaticLayout: true,
-      minimap: { enabled: false },
-      lineNumbers: lineCount > 1 ? 'on' : 'off',
-      glyphMargin: false,
-      folding: false,
-      links: false,
-      overviewRulerLanes: 0,
-      hideCursorInOverviewRuler: true,
-      renderLineHighlight: 'none',
-      scrollBeyondLastLine: false,
-      scrollbar: {
-        verticalScrollbarSize: 8,
-        horizontalScrollbarSize: 8,
-        alwaysConsumeMouseWheel: false,
-      },
-      padding: {
-        top: 12,
-        bottom: 12,
-      },
-    })
+    if (!monaco?.editor?.colorize || isIncomplete) {
+      el.textContent = code
+      return
+    }
 
-    editorRef.current = editor
-    editor.layout()
+    let cancelled = false
+    monaco.editor
+      .colorize(code, language, { tabSize: 2 })
+      .then((html: string) => {
+        if (!cancelled) el.innerHTML = html
+      })
+      .catch(() => {
+        if (!cancelled) el.textContent = code
+      })
 
     return () => {
-      editor.dispose()
-      editorRef.current = null
+      cancelled = true
     }
-  }, [monaco, isIncomplete, language, theme, fontFamily, fontSize, lineHeight, lineCount])
-
-  useEffect(() => {
-    const editor = editorRef.current
-    if (!editor) return
-
-    const model = editor.getModel()
-    if (model && model.getValue() !== code) {
-      model.setValue(code)
-    }
-
-    editor.updateOptions({
-      lineNumbers: lineCount > 1 ? 'on' : 'off',
-    })
-    editor.layout({
-      width: containerRef.current?.clientWidth ?? 0,
-      height: editorHeight,
-    })
-  }, [code, editorHeight, lineCount])
+  }, [monaco, isIncomplete, code, language])
 
   async function copyCode() {
     try {
@@ -173,18 +143,13 @@ function MonacoCodeBlock({ children, className, monaco, theme, fontFamily, fontS
           {copied ? 'Copiado' : 'Copiar'}
         </button>
       </figcaption>
-      {monaco && !isIncomplete ? (
-        <div
-          ref={containerRef}
-          className="ai-code-block-editor"
-          style={{ height: editorHeight }}
-          aria-label={`Código ${languageLabel} de solo lectura`}
-        />
-      ) : (
-        <pre className="ai-code-block-fallback" aria-label={`Código ${languageLabel} de solo lectura`}>
-          <code>{code}</code>
-        </pre>
-      )}
+      <pre
+        className="ai-code-block-code"
+        style={{ fontFamily, ['--ai-code-lines' as any]: lineCount }}
+        aria-label={`Código ${languageLabel} de solo lectura`}
+      >
+        <code ref={codeRef}>{code}</code>
+      </pre>
     </figure>
   )
 }

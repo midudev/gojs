@@ -174,10 +174,14 @@ body {
 
 .header-logo {
   height: 20px;
-  width: auto;
+  /* El logo es cuadrado (1024×1024). Fijar la relación de aspecto reserva el
+     ancho antes de que la imagen cargue y evita el salto de layout (CLS). */
+  aspect-ratio: 1 / 1;
+  width: 20px;
   border-radius: 6px;
   margin-right: 16px;
   object-fit: contain;
+  flex-shrink: 0;
 }
 
 .tabs-container {
@@ -270,7 +274,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease, width 0.2s ease, height 0.2s ease;
   visibility: hidden;
 
   &:hover {
@@ -294,7 +299,8 @@ body {
   align-items: center;
   align-self: center;
   padding: 6px;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease, width 0.2s ease, height 0.2s ease;
   position: relative;
 
   &:hover {
@@ -332,7 +338,8 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease, width 0.2s ease, height 0.2s ease;
   position: relative;
 }
 
@@ -380,6 +387,15 @@ body {
   pointer-events: none;
   overflow: hidden;
   z-index: 5;
+}
+
+/* Capa que contiene las pastillas en coordenadas de contenido. El scroll del
+   editor se refleja moviendo solo esta capa con un transform (compositor),
+   evitando recrear las etiquetas en cada frame. */
+.timing-gutter__content {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
 }
 
 .timing-gutter__label {
@@ -433,7 +449,8 @@ body {
   width: 1px;
   height: 100%;
   background-color: var(--surface-divider-color);
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease, width 0.2s ease, height 0.2s ease;
 }
 
 /* Línea más gruesa en hover/active sin afectar el layout */
@@ -513,6 +530,11 @@ body {
   isolation: isolate;
   color: var(--console-text-primary, var(--color-text-primary));
   cursor: default;
+  /* En ráfagas de miles de logs, el navegador puede saltar el layout/paint de las
+     filas fuera de pantalla. La altura estimada es la de una línea (el caso común);
+     las filas multilínea se miden con precisión al entrar en el viewport. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--editor-line-height, 22px);
 
   /* El hover comparte exactamente el fondo del highlight de línea de Monaco. */
   &::before {
@@ -2180,7 +2202,8 @@ resize-panels[data-orientation='vertical'] > .chatbot-panel {
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease, width 0.2s ease, height 0.2s ease;
 }
 
 .chatbot-action-btn:hover {
@@ -2638,19 +2661,8 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   outline-offset: 2px;
 }
 
-.ai-code-block-editor {
-  width: 100%;
-  overflow: hidden;
-  background: var(--editor-background, var(--color-bg-secondary));
-}
-
-.ai-code-block .monaco-editor,
-.ai-code-block .monaco-editor-background,
-.ai-code-block .monaco-editor .margin {
-  background-color: var(--editor-background, var(--color-bg-secondary)) !important;
-}
-
-.ai-code-block-fallback {
+/* Bloque de código estático (resaltado con monaco.editor.colorize, sin editor). */
+.ai-code-block-code {
   max-height: 420px;
   margin: 0;
   overflow: auto;
@@ -2661,9 +2673,16 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   font-size: 13px;
   line-height: var(--editor-line-height, 1.6);
   white-space: pre;
+  tab-size: 2;
 }
 
-.ai-code-block-fallback code {
+.ai-code-block-code code {
+  font-family: inherit;
+}
+
+/* colorize emite <br> y <span class="mtk*">; neutralizamos su display por defecto. */
+.ai-code-block-code .mtk1,
+.ai-code-block-code [class^='mtk'] {
   font-family: inherit;
 }
 

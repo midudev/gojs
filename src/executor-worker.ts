@@ -7,6 +7,7 @@ interface ExecuteMessage {
   type: 'execute'
   code: string
   lineMap: Record<number, number> // Mapeo de líneas: modificado -> original
+  runId?: number // Generación de ejecución (para descartar resultados obsoletos)
 }
 
 interface LogMessage {
