@@ -24,14 +24,16 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'unsafe-eval' blob: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ipc: http://ipc.localhost https:; worker-src 'self' blob:"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "category": "DeveloperTool",
-    "resources": ["runtime/**/*"],
+    "resources": [
+      "runtime/**/*"
+    ],
     "shortDescription": "A modern JavaScript/TypeScript playground",
     "longDescription": "GoJS is a fast, modern JavaScript and TypeScript playground: run code instantly, inspect expressions inline, import ESM modules from any CDN and chat with a built-in AI assistant.",
     "copyright": "© midudev",
@@ -42,6 +44,20 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "signCommand": {
+        "cmd": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "../scripts/sign-windows.ps1",
+          "-Path",
+          "%1"
+        ]
+      }
+    },
     "linux": {
       "appimage": {
         "bundleMediaFramework": false

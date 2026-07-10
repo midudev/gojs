@@ -12,6 +12,8 @@
     "types:node": "node scripts/gen-node-types.mjs",
     "types:webllm": "node scripts/gen-webllm-models.mjs",
     "node:fetch": "node scripts/fetch-node.mjs",
+    "version:set": "node scripts/set-version.mjs",
+    "version:check": "node scripts/set-version.mjs --check",
     "desktop:dev": "tauri dev",
     "desktop:build": "pnpm node:fetch && tauri build"
   },
@@ -25,13 +27,15 @@
   "author": "",
   "license": "MIT",
   "packageManager": "pnpm@11.0.9",
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "26.1.0",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.3",
-    "@vitest/browser-preview": "^4.1.10",
     "esbuild": "0.28.1",
     "typescript": "6.0.3",
     "vite": "8.1.3",

@@ -1,100 +1,299 @@
-name: Release Desktop App
+name: Release desktop
 
-# Builds the Tauri desktop app for macOS, Linux and Windows and publishes a
-# GitHub Release with the installers on every push to main.
 on:
   push:
-    branches: [main]
-    # Avoid rebuilding when only docs / non-app files change.
-    paths-ignore:
-      - '**/*.md'
-      - 'LICENSE'
-      - '.gitignore'
-  workflow_dispatch: {}
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable tag to release (vX.Y.Z)
+        required: true
+        type: string
 
-# Allow the workflow to create releases and upload the built binaries.
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Resolve and validate release tag
+        id: release
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${DISPATCH_TAG}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Release tag must match vX.Y.Z exactly (received: ${tag})"
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${tag#v}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout release tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Verify tag and source versions
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}"
+          node scripts/set-version.mjs --check "${RELEASE_VERSION}"
+
   build:
+    needs: prepare
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macOS: a single universal binary (Apple Silicon + Intel).
-          - platform: macos-latest
-            args: '--target universal-apple-darwin'
-            rust-targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
-          # Linux: build on 22.04 for broad glibc compatibility (deb/rpm/AppImage).
-          - platform: ubuntu-22.04
-            args: ''
-            rust-targets: ''
-          # Windows: .msi + NSIS installers.
-          - platform: windows-latest
-            args: ''
-            rust-targets: ''
-
-    runs-on: ${{ matrix.platform }}
+          - label: macOS Apple Silicon
+            runner: macos-15
+            rust_target: aarch64-apple-darwin
+            node_platform: darwin
+            node_arch: arm64
+          - label: macOS Intel
+            runner: macos-15-intel
+            rust_target: x86_64-apple-darwin
+            node_platform: darwin
+            node_arch: x64
+          - label: Windows x64
+            runner: windows-2022
+            rust_target: x86_64-pc-windows-msvc
+            node_platform: win32
+            node_arch: x64
+          - label: Linux x64
+            runner: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+            node_platform: linux
+            node_arch: x64
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout release tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 26.5.0
           cache: pnpm
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          targets: ${{ matrix.rust-targets }}
+          targets: ${{ matrix.rust_target }}
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: './src-tauri -> target'
+          key: ${{ matrix.rust_target }}
 
       - name: Install Linux system dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.node_platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libgtk-3-dev \
-            libxdo-dev \
-            libssl-dev \
-            patchelf \
             build-essential \
-            curl wget file
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build and release the desktop app
-        uses: tauri-apps/tauri-action@v0
+      - name: Verify source version
+        run: pnpm version:check ${{ needs.prepare.outputs.version }}
+
+      - name: Fetch target Node.js runtime
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_ARCH: ${{ matrix.node_arch }}
+          NODE_PLATFORM: ${{ matrix.node_platform }}
+        run: pnpm node:fetch
+
+      - name: Configure optional Apple signing
+        if: matrix.node_platform == 'darwin'
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [[ -z "${APPLE_CERTIFICATE_BASE64}" || -z "${APPLE_CERTIFICATE_PASSWORD}" || -z "${APPLE_SIGNING_IDENTITY_SECRET}" ]]; then
+            echo "Apple signing secrets are incomplete; producing unsigned artifacts."
+            exit 0
+          fi
+
+          certificate_path="${RUNNER_TEMP}/certificate.p12"
+          keychain_path="${RUNNER_TEMP}/gojs-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+
+          printf '%s' "${APPLE_CERTIFICATE_BASE64}" | openssl base64 -d -A -out "${certificate_path}"
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          security import "${certificate_path}" -k "${keychain_path}" -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
+          security list-keychains -d user -s "${keychain_path}"
+
+          echo "APPLE_SIGNING_IDENTITY=${APPLE_SIGNING_IDENTITY_SECRET}" >> "${GITHUB_ENV}"
+          echo "GOJS_SIGNING_KEYCHAIN=${keychain_path}" >> "${GITHUB_ENV}"
+          echo "GOJS_APPLE_SIGNING_READY=true" >> "${GITHUB_ENV}"
+          rm -f "${certificate_path}"
+
+      - name: Configure optional Apple notarization
+        if: matrix.node_platform == 'darwin'
+        env:
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [[ "${GOJS_APPLE_SIGNING_READY:-}" != "true" || -z "${APPLE_ID_SECRET}" || -z "${APPLE_PASSWORD_SECRET}" || -z "${APPLE_TEAM_ID_SECRET}" ]]; then
+            echo "Apple notarization secrets are incomplete; skipping notarization."
+            exit 0
+          fi
+
+          echo "APPLE_ID=${APPLE_ID_SECRET}" >> "${GITHUB_ENV}"
+          echo "APPLE_PASSWORD=${APPLE_PASSWORD_SECRET}" >> "${GITHUB_ENV}"
+          echo "APPLE_TEAM_ID=${APPLE_TEAM_ID_SECRET}" >> "${GITHUB_ENV}"
+
+      - name: Configure optional Windows signing
+        if: matrix.node_platform == 'win32'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE_BASE64 -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            Write-Host "Windows signing secrets are incomplete; keeping unsigned artifacts."
+            exit 0
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP "gojs-signing.pfx"
+          [IO.File]::WriteAllBytes(
+            $pfxPath,
+            [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64)
+          )
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "GOJS_WINDOWS_CERTIFICATE_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build desktop bundles
+        run: pnpm tauri build --ci --target ${{ matrix.rust_target }} -- --locked
+
+      - name: Remove temporary Windows certificate
+        if: always() && matrix.node_platform == 'win32'
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_CERTIFICATE_THUMBPRINT) {
+            Remove-Item "Cert:\CurrentUser\My\$env:WINDOWS_CERTIFICATE_THUMBPRINT" -Force -ErrorAction SilentlyContinue
+          }
+          if ($env:GOJS_WINDOWS_CERTIFICATE_PATH) {
+            Remove-Item $env:GOJS_WINDOWS_CERTIFICATE_PATH -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Remove temporary Apple keychain
+        if: always() && matrix.node_platform == 'darwin'
+        run: |
+          if [[ -n "${GOJS_SIGNING_KEYCHAIN:-}" ]]; then
+            security delete-keychain "${GOJS_SIGNING_KEYCHAIN}"
+          fi
+
+      - name: Stage artifacts and SHA256 checksums
+        if: success()
+        shell: bash
+        env:
+          ARTIFACT_PREFIX: ${{ matrix.rust_target }}
+        run: |
+          set -euo pipefail
+          bundle_dir="src-tauri/target/${ARTIFACT_PREFIX}/release/bundle"
+          mkdir -p release-assets
+
+          while IFS= read -r -d '' file; do
+            cp "${file}" "release-assets/gojs-${ARTIFACT_PREFIX}-$(basename "${file}")"
+          done < <(
+            find "${bundle_dir}" -type f \
+              \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+              -print0
+          )
+
+          node --input-type=module -e '
+            import { createHash } from "node:crypto";
+            import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+            const dir = "release-assets";
+            const files = readdirSync(dir).toSorted();
+            if (files.length === 0) throw new Error("No desktop artifacts were produced");
+            const lines = files.map((name) =>
+              `${createHash("sha256").update(readFileSync(`${dir}/${name}`)).digest("hex")}  ${name}`
+            );
+            writeFileSync(`${dir}/SHA256SUMS-${process.env.ARTIFACT_PREFIX}.txt`, `${lines.join("\n")}\n`);
+          '
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          # A unique tag/release per push to main so history is preserved.
-          tagName: desktop-v__VERSION__-build.${{ github.run_number }}
-          releaseName: 'GoJS Desktop v__VERSION__ (build ${{ github.run_number }})'
-          releaseBody: |
-            Automated desktop build of GoJS.
+          name: desktop-${{ matrix.rust_target }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
 
-            Commit: ${{ github.sha }}
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all successful builds
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: desktop-*
+          path: release-assets
+          merge-multiple: true
 
-            Download the installer for your platform below:
-            - **macOS**: `.dmg` (universal — Apple Silicon & Intel)
-            - **Windows**: `.msi` or `.exe` (NSIS setup)
-            - **Linux**: `.AppImage`, `.deb` or `.rpm`
-          releaseDraft: false
-          prerelease: false
-          args: ${{ matrix.args }}
+      - name: Create the single draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::A GitHub release already exists for ${RELEASE_TAG}"
+            exit 1
+          fi
+
+          gh release create "${RELEASE_TAG}" release-assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --draft \
+            --generate-notes \
+            --title "GoJS Desktop ${RELEASE_TAG}"
