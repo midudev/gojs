@@ -1,4 +1,4 @@
-import { INITIAL_CODE } from './consts'
+import { INITIAL_CODE, SHOWCASE_CODE } from './consts'
 import { clearHistory } from './history'
 
 type MonacoLike = any
@@ -19,9 +19,10 @@ type TabsState = {
   activeId: string | null
 }
 
-const IS_LANDING_EMBED = new URLSearchParams(window.location.search).get('embed') === 'landing'
-const STORAGE_TABS = IS_LANDING_EMBED ? 'xjs.tabs.landing-demo.v1' : 'xjs.tabs'
-const STORAGE_ACTIVE = IS_LANDING_EMBED ? 'xjs.activeTabId.landing-demo.v1' : 'xjs.activeTabId'
+const EMBED_MODE = new URLSearchParams(window.location.search).get('embed')
+const IS_LANDING_EMBED = EMBED_MODE === 'landing' || EMBED_MODE === 'showcase'
+const STORAGE_TABS = IS_LANDING_EMBED ? `xjs.tabs.${EMBED_MODE}.v1` : 'xjs.tabs'
+const STORAGE_ACTIVE = IS_LANDING_EMBED ? `xjs.activeTabId.${EMBED_MODE}.v1` : 'xjs.activeTabId'
 
 export let state: TabsState = { tabs: [], activeId: null }
 let editor: EditorLike | null = null
@@ -98,7 +99,7 @@ function ensureAtLeastOneTab() {
   if (state.tabs.length === 0) {
     const tab: Tab = {
       id: generateId(),
-      content: INITIAL_CODE,
+      content: EMBED_MODE === 'showcase' ? SHOWCASE_CODE : INITIAL_CODE,
       isDirty: false,
       createdAt: Date.now(),
       updatedAt: Date.now(),
