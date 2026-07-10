@@ -8,14 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:browser": "vitest --config=vitest.browser.config.ts",
-    "native:cef:install": "cd native && zig build cef-install",
-    "native:dev": "cd native && zig build dev",
-    "native:run": "cd native && zig build run",
-    "native:package": "cd native && zig build package",
-    "native:doctor": "cd native && zig build doctor",
     "tauri": "tauri",
+    "types:node": "node scripts/gen-node-types.mjs",
+    "node:fetch": "node scripts/fetch-node.mjs",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "pnpm node:fetch && tauri build"
   },
   "keywords": [
     "javascript",
@@ -37,12 +34,12 @@
     "esbuild": "0.28.1",
     "typescript": "6.0.3",
     "vite": "8.1.3",
-    "vitest": "4.1.10",
-    "zero-native": "0.3.0"
+    "vitest": "4.1.10"
   },
   "dependencies": {
     "@mlc-ai/web-llm": "0.2.84",
     "@tailwindcss/vite": "4.3.2",
+    "@tauri-apps/api": "^2.11.1",
     "@testing-library/dom": "10.4.1",
     "@vitest/browser-playwright": "^4.1.10",
     "acorn": "8.17.0",

@@ -11,14 +11,14 @@ node_modules
 dist
 dist-ssr
 *.local
-native/.zig-cache
-native/dist
-native/zig-out
-native/third_party/cef
 
 # Tauri (desktop app)
 src-tauri/target
 src-tauri/gen
+
+# Bundled Node.js runtime (fetched by scripts/fetch-node.mjs, ~60-90 MB)
+src-tauri/runtime/*
+!src-tauri/runtime/.gitkeep
 
 # Editor directories and files
 .vscode/*

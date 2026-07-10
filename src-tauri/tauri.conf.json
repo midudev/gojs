@@ -31,6 +31,7 @@
     "active": true,
     "targets": "all",
     "category": "DeveloperTool",
+    "resources": ["runtime/**/*"],
     "shortDescription": "A modern JavaScript/TypeScript playground",
     "longDescription": "GoJS is a fast, modern JavaScript and TypeScript playground: run code instantly, inspect expressions inline, import ESM modules from any CDN and chat with a built-in AI assistant.",
     "copyright": "© midudev",

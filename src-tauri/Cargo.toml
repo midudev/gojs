@@ -23,6 +23,23 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Native Node.js runtime bridge: we spawn the bundled (or system) Node/npm as
+# child processes and stream their output back to the webview. `which` locates a
+# system Node when no bundled runtime is present (dev + graceful fallback).
+which = "7"
+
+# Native llama.cpp AI backend: the desktop app downloads a prebuilt llama.cpp
+# release (`llama-server`) and a GGUF model, runs the server locally and proxies
+# chat completions to it. `reqwest` (rustls, no system OpenSSL) does the HTTP
+# downloads + talks to the local server; `zip` unpacks the release archive.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# Unix-only: SIGKILL a runaway run's whole process group to recover from
+# infinite loops without freezing the app.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Release profile tuned for a small, fast binary. The runtime performance of a
 # Tauri app is dominated by the system webview, so here we optimise the native
 # shell for size and startup time.
