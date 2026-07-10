@@ -365,7 +365,17 @@ let nativeRunSeq = 0
 // lleguen de un proceso anterior que aún se está muriendo.
 let latestNativeRunGen = 0
 
+const isLandingEmbed = new URLSearchParams(window.location.search).get('embed') === 'landing'
 let currentSettings = loadSettings()
+
+if (isLandingEmbed) {
+  currentSettings = {
+    ...currentSettings,
+    theme: 'dracula',
+    fontFamily: 'Cascadia Code',
+    layoutOrientation: 'horizontal',
+  }
+}
 let chromePromptApiModelAvailable = false
 let chromePromptApiAvailabilityChecked = false
 
@@ -3086,7 +3096,9 @@ function setupDependenciesManager() {
   })
   refreshButton?.addEventListener('click', () => void refresh())
   revealButton?.addEventListener('click', () => {
-    void revealWorkspace().catch((err) => setStatus(`Error: ${err?.message || err}`, 'error'))
+    void revealWorkspace()
+      .then(() => setStatus('Workspace opened.', 'ok'))
+      .catch((err) => setStatus(`Could not open workspace: ${err?.message || err}`, 'error'))
   })
 
   void refresh()

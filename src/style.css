@@ -1307,6 +1307,17 @@ body {
   box-shadow: 0 0 16px var(--color-error);
 }
 
+.runtime-security-notice {
+  margin: 12px 0 0;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 38%, var(--color-border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .setting-help.error {
   color: var(--color-error);
 }

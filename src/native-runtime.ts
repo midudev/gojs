@@ -4,8 +4,8 @@
 //
 // The desktop app can execute the editor's code against a *real* Node.js 26
 // process — with real `npm install`, the full stdlib and native modules — which
-// is what makes GoJS "a better RunJS". Dependencies the user adds from Settings
-// live in a per-user workspace and are importable from the code they run.
+// gives GoJS a complete local development runtime. Dependencies the user adds
+// from Settings live in a per-user workspace and are importable from their code.
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'

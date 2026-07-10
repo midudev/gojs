@@ -131,10 +131,33 @@ impl Default for LlamaState {
     }
 }
 
+/// Terminate the complete server process tree. llama-server may create helper
+/// processes, and leaving those behind can keep model files or ports locked.
+fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", pid.as_str(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        // start_server places llama-server in its own process group.
+        let pgid = child.id() as i32;
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 impl Drop for ServerProcess {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        kill_tree(&mut self.child);
     }
 }
 
@@ -246,17 +269,19 @@ fn http_client() -> Result<reqwest::blocking::Client, String> {
 /// its direct download URL — built from the pinned tag, no GitHub API involved.
 /// CPU builds are chosen on Windows/Linux so they run without a specific
 /// GPU/driver; the macOS build ships Metal acceleration out of the box.
-fn asset_url() -> Result<String, String> {
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
-    let suffix = match (os, arch) {
+fn asset_suffix(os: &str, arch: &str) -> Result<&'static str, String> {
+    Ok(match (os, arch) {
         ("macos", "aarch64") => "macos-arm64",
         ("macos", "x86_64") => "macos-x64",
         ("linux", "x86_64") => "ubuntu-x64",
         ("windows", "x86_64") => "win-cpu-x64",
         ("windows", "aarch64") => "win-cpu-arm64",
         _ => return Err(format!("no prebuilt llama.cpp binary for {os}/{arch}")),
-    };
+    })
+}
+
+fn asset_url() -> Result<String, String> {
+    let suffix = asset_suffix(std::env::consts::OS, std::env::consts::ARCH)?;
     Ok(format!(
         "https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_RELEASE_TAG}/llama-{LLAMA_RELEASE_TAG}-bin-{suffix}.zip"
     ))
@@ -280,7 +305,10 @@ fn download_with_progress(
         .error_for_status()
         .map_err(|e| format!("download failed: {e}"))?;
 
-    let total = response.content_length().unwrap_or(total_hint).max(total_hint);
+    let total = response
+        .content_length()
+        .unwrap_or(total_hint)
+        .max(total_hint);
 
     // Download to a temp file, then rename, so an interrupted download never
     // looks like a complete install.
@@ -315,7 +343,8 @@ fn download_with_progress(
             );
         }
     }
-    file.flush().map_err(|e| format!("cannot flush download: {e}"))?;
+    file.flush()
+        .map_err(|e| format!("cannot flush download: {e}"))?;
     drop(file);
     fs::rename(&tmp, dest).map_err(|e| format!("cannot finalize download: {e}"))?;
 
@@ -335,7 +364,8 @@ fn download_with_progress(
 /// Extract the release zip and return the path to `llama-server[.exe]` inside it.
 fn extract_server_binary(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     let file = fs::File::open(zip_path).map_err(|e| format!("cannot open archive: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("cannot read archive: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("cannot read archive: {e}"))?;
 
     fs::create_dir_all(dest_dir).map_err(|e| format!("cannot create bin dir: {e}"))?;
 
@@ -345,7 +375,9 @@ fn extract_server_binary(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf, St
             .map_err(|e| format!("cannot read archive entry: {e}"))?;
         // Flatten: keep only the file name, dropping the `build/bin/` prefix, so
         // the server binary and its shared libraries end up side by side.
-        let Some(name) = entry.enclosed_name().and_then(|p| p.file_name().map(|n| n.to_owned()))
+        let Some(name) = entry
+            .enclosed_name()
+            .and_then(|p| p.file_name().map(|n| n.to_owned()))
         else {
             continue;
         };
@@ -353,8 +385,10 @@ fn extract_server_binary(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf, St
             continue;
         }
         let out_path = dest_dir.join(&name);
-        let mut out = fs::File::create(&out_path).map_err(|e| format!("cannot extract file: {e}"))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| format!("cannot write extracted file: {e}"))?;
+        let mut out =
+            fs::File::create(&out_path).map_err(|e| format!("cannot extract file: {e}"))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("cannot write extracted file: {e}"))?;
 
         #[cfg(unix)]
         {
@@ -444,7 +478,9 @@ fn wait_until_ready(client: &reqwest::blocking::Client, port: u16) -> Result<(),
             }
         }
         if started.elapsed() >= SERVER_READY_TIMEOUT {
-            return Err("llama-server did not become ready in time".to_string());
+            return Err(
+                "The local model server did not become ready within 90 seconds. Close memory-heavy apps, choose a smaller model, and try again.".to_string(),
+            );
         }
         std::thread::sleep(Duration::from_millis(300));
     }
@@ -535,7 +571,14 @@ fn start_server(
         },
     );
 
-    wait_until_ready(client, port)?;
+    if let Err(error) = wait_until_ready(client, port) {
+        // Do not retain a failed or half-started server. Dropping it terminates
+        // its complete process tree and releases the model file and port.
+        if let Ok(mut guard) = state.server.lock() {
+            *guard = None;
+        }
+        return Err(error);
+    }
 
     let _ = app.emit(
         "llama://progress",
@@ -699,7 +742,7 @@ pub async fn llama_generate(
         let reader = BufReader::new(response);
         for line in reader.lines() {
             // A newer request (or a stop) superseded us: abort quietly.
-            if inner.generation.load(Ordering::SeqCst) != my_gen {
+            if generation_cancelled(inner.generation.load(Ordering::SeqCst), my_gen) {
                 break;
             }
             let Ok(line) = line else { break };
@@ -773,4 +816,49 @@ pub fn llama_uninstall(
         fs::remove_file(&path).map_err(|e| format!("cannot delete model: {e}"))?;
     }
     Ok(())
+}
+
+fn generation_cancelled(current: u64, claimed: u64) -> bool {
+    current != claimed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        asset_suffix, find_model, generation_cancelled, resolve_model_id, DEFAULT_MODEL_ID, MODELS,
+    };
+
+    #[test]
+    fn maps_supported_platform_assets() {
+        assert_eq!(asset_suffix("macos", "aarch64").unwrap(), "macos-arm64");
+        assert_eq!(asset_suffix("macos", "x86_64").unwrap(), "macos-x64");
+        assert_eq!(asset_suffix("linux", "x86_64").unwrap(), "ubuntu-x64");
+        assert_eq!(asset_suffix("windows", "x86_64").unwrap(), "win-cpu-x64");
+        assert_eq!(asset_suffix("windows", "aarch64").unwrap(), "win-cpu-arm64");
+    }
+
+    #[test]
+    fn rejects_unsupported_platform_assets() {
+        assert!(asset_suffix("linux", "aarch64").is_err());
+        assert!(asset_suffix("freebsd", "x86_64").is_err());
+    }
+
+    #[test]
+    fn resolves_known_models_and_falls_back_to_default() {
+        assert_eq!(
+            resolve_model_id(Some("qwen2.5-coder-0.5b")).id,
+            "qwen2.5-coder-0.5b"
+        );
+        assert_eq!(resolve_model_id(Some("unknown")).id, DEFAULT_MODEL_ID);
+        assert_eq!(resolve_model_id(None).id, DEFAULT_MODEL_ID);
+        assert!(find_model(DEFAULT_MODEL_ID).is_some());
+        assert!(MODELS.iter().all(|model| !model.id.is_empty()));
+    }
+
+    #[test]
+    fn detects_generation_cancellation() {
+        assert!(!generation_cancelled(7, 7));
+        assert!(generation_cancelled(8, 7));
+        assert!(generation_cancelled(6, 7));
+    }
 }

@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 /// Guards concurrent npm operations: npm is not safe to run twice against the
 /// same `node_modules` at once, and it keeps the UI honest (one install a time).
@@ -38,6 +39,9 @@ pub struct NpmLock(Mutex<()>);
 /// Absolute ceiling on a single native run, so a runaway program can never
 /// freeze the app even if the frontend forgets to pass a timeout.
 const MAX_RUN_TIMEOUT_MS: u64 = 120_000;
+/// npm may legitimately take a while on slow networks, but must not be allowed
+/// to leave the dependency UI locked forever.
+const NPM_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// How often the wait loop checks the deadline / cancellation flag.
 const POLL_INTERVAL_MS: u64 = 40;
 
@@ -72,6 +76,17 @@ impl Default for RunControl {
 /// SIGKILL the child. On Unix we gave it its own process group, so we can take
 /// down anything it spawned too (workers, `child_process`), not just the shell.
 fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        // Child::kill only terminates npm.cmd/node itself. taskkill /T also
+        // terminates installers and lifecycle scripts spawned underneath it.
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", pid.as_str(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
     #[cfg(unix)]
     {
         // Negative pid targets the whole process group (see `process_group(0)`).
@@ -174,13 +189,20 @@ fn resolve(app: &AppHandle) -> Option<Resolved> {
     }
 
     // 2. Bundled runtime shipped as a resource.
-    if let Ok(runtime) = app.path().resolve("runtime", tauri::path::BaseDirectory::Resource) {
+    if let Ok(runtime) = app
+        .path()
+        .resolve("runtime", tauri::path::BaseDirectory::Resource)
+    {
         let node = runtime.join(bundled_node_rel());
         if node.exists() {
             let npm_cli = runtime.join(bundled_npm_cli_rel());
             return Some(Resolved {
                 node,
-                npm_cli: if npm_cli.exists() { Some(npm_cli) } else { None },
+                npm_cli: if npm_cli.exists() {
+                    Some(npm_cli)
+                } else {
+                    None
+                },
                 source: NodeSource::Bundled,
             });
         }
@@ -239,7 +261,9 @@ fn npm_command(resolved: &Resolved) -> Result<Command, String> {
         }
         which::which(candidate)
             .map(Command::new)
-            .map_err(|_| "npm not found next to Node or on PATH".to_string())
+            .map_err(|_| {
+                "npm is unavailable. Install npm next to Node.js or set GOJS_NODE_PATH to a complete Node.js installation.".to_string()
+            })
     }
 }
 
@@ -271,7 +295,9 @@ pub fn node_info(app: AppHandle) -> Result<NodeInfo, String> {
     };
 
     let version = read_version(&mut Command::new(&resolved.node));
-    let npm_version = npm_command(&resolved).ok().and_then(|mut c| read_version(&mut c));
+    let npm_version = npm_command(&resolved)
+        .ok()
+        .and_then(|mut c| read_version(&mut c));
 
     Ok(NodeInfo {
         available: version.is_some(),
@@ -300,7 +326,8 @@ pub async fn node_run(
     language: Option<String>,
     timeout_ms: Option<u64>,
 ) -> Result<RunResult, String> {
-    let resolved = resolve(&app).ok_or("No Node.js runtime available")?;
+    let resolved = resolve(&app)
+        .ok_or("Node.js is unavailable. Reinstall the desktop app or configure GOJS_NODE_PATH.")?;
     let ws = workspace_dir(&app)?;
 
     // `.mjs` so top-level `import`/`await` work without a per-run package.json
@@ -326,7 +353,11 @@ pub async fn node_run(
     std::fs::write(&entry, &code).map_err(|e| format!("cannot write entry file: {e}"))?;
 
     // Deadline: whatever the frontend asks for, capped so nothing runs forever.
-    let deadline = Duration::from_millis(timeout_ms.unwrap_or(MAX_RUN_TIMEOUT_MS).min(MAX_RUN_TIMEOUT_MS));
+    let deadline = Duration::from_millis(
+        timeout_ms
+            .unwrap_or(MAX_RUN_TIMEOUT_MS)
+            .min(MAX_RUN_TIMEOUT_MS),
+    );
 
     let node = resolved.node.clone();
     let ctl_task = ctl.clone();
@@ -350,7 +381,9 @@ pub async fn node_run(
             command.process_group(0);
         }
 
-        let mut child = command.spawn().map_err(|e| format!("failed to spawn Node: {e}"))?;
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("failed to spawn Node: {e}"))?;
 
         // Drain stdout and stderr on their own threads so a chatty program can't
         // deadlock by filling one pipe while we block reading the other.
@@ -450,7 +483,9 @@ fn pump<R: std::io::Read + Send + 'static>(
     pipe: Option<R>,
     run: u64,
 ) -> String {
-    let Some(pipe) = pipe else { return String::new() };
+    let Some(pipe) = pipe else {
+        return String::new();
+    };
     let mut acc = String::new();
     let reader = BufReader::new(pipe);
     for line in reader.lines() {
@@ -505,16 +540,18 @@ fn installed_version(ws: &Path, name: &str) -> Option<String> {
     let pkg = ws.join("node_modules").join(name).join("package.json");
     let text = std::fs::read_to_string(pkg).ok()?;
     let json: Value = serde_json::from_str(&text).ok()?;
-    json.get("version").and_then(Value::as_str).map(String::from)
+    json.get("version")
+        .and_then(Value::as_str)
+        .map(String::from)
 }
 
-fn run_npm(
-    app: &AppHandle,
-    lock: &State<'_, NpmLock>,
-    args: &[&str],
-) -> Result<RunResult, String> {
-    let _guard = lock.0.lock().map_err(|_| "npm lock poisoned")?;
-    let resolved = resolve(app).ok_or("No Node.js runtime available")?;
+fn run_npm(app: &AppHandle, lock: &State<'_, NpmLock>, args: &[&str]) -> Result<RunResult, String> {
+    let _guard = lock
+        .0
+        .lock()
+        .map_err(|_| "npm is temporarily unavailable; restart the app and try again")?;
+    let resolved = resolve(app)
+        .ok_or("Node.js is unavailable. Reinstall the desktop app or configure GOJS_NODE_PATH.")?;
     let ws = workspace_dir(app)?;
 
     let started = Instant::now();
@@ -527,7 +564,17 @@ fn run_npm(
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
 
-    let mut child = cmd.spawn().map_err(|e| format!("failed to spawn npm: {e}"))?;
+    // npm and lifecycle scripts get their own process group on Unix. Windows
+    // uses taskkill /T in kill_tree.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let mut child = cmd.spawn().map_err(|e| {
+        format!("Could not start npm ({e}). Check the Node.js installation and retry.")
+    })?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     // Generation 0: npm output is not gated by the run generation, so the
@@ -537,29 +584,86 @@ fn run_npm(
     let a2 = app.clone();
     let err_handle = std::thread::spawn(move || pump(a2, "stderr", stderr, 0));
 
-    let status = child.wait().map_err(|e| format!("npm exited abnormally: {e}"))?;
+    let mut timed_out = false;
+    let exit_code = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.code(),
+            Ok(None) => {}
+            Err(e) => {
+                kill_tree(&mut child);
+                let _ = out_handle.join();
+                let _ = err_handle.join();
+                return Err(format!(
+                    "npm could not be monitored ({e}). Its process tree was stopped; retry the operation."
+                ));
+            }
+        }
+        if started.elapsed() >= NPM_TIMEOUT {
+            timed_out = true;
+            kill_tree(&mut child);
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+    };
     let stdout = out_handle.join().unwrap_or_default();
-    let stderr = err_handle.join().unwrap_or_default();
+    let mut stderr = err_handle.join().unwrap_or_default();
+    if timed_out {
+        stderr.push_str(
+            "\n⏱️ npm was stopped after 5 minutes. Check your network or registry, then try again.\n",
+        );
+    }
 
     Ok(RunResult {
         stdout,
         stderr,
-        exit_code: status.code(),
+        exit_code,
         duration_ms: started.elapsed().as_millis(),
-        timed_out: false,
+        timed_out,
     })
 }
 
 /// Validate a package specifier so we never hand npm something shell-ish. npm
 /// receives argv directly (no shell) but we still keep names sane.
 fn valid_pkg_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 214
-        && !name.starts_with('.')
-        && !name.starts_with('_')
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '-' | '_' | '.'))
+    fn valid_part(part: &str) -> bool {
+        !part.is_empty()
+            && !part.starts_with('.')
+            && !part.starts_with('_')
+            && part.bytes().all(|c| {
+                c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'-' | b'_' | b'.')
+            })
+    }
+
+    if name.is_empty() || name.len() > 214 {
+        return false;
+    }
+
+    if let Some(scoped) = name.strip_prefix('@') {
+        let Some((scope, package)) = scoped.split_once('/') else {
+            return false;
+        };
+        !package.contains('/') && valid_part(scope) && valid_part(package)
+    } else {
+        !name.contains('/') && valid_part(name)
+    }
+}
+
+/// Accept npm tags and semver/range syntax, but reject URL/path-like specs. In
+/// addition to keeping dependency operations predictable, this prevents a URL
+/// containing credentials from being echoed by npm into user-visible output.
+fn valid_pkg_version(version: &str) -> bool {
+    !version.is_empty()
+        && version.len() <= 128
+        && version.trim() == version
+        && !version.chars().any(char::is_control)
+        && version.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || c.is_ascii_whitespace()
+                || matches!(
+                    c,
+                    '.' | '-' | '_' | '+' | '^' | '~' | '<' | '>' | '=' | '*' | '|'
+                )
+        })
 }
 
 #[tauri::command]
@@ -570,7 +674,18 @@ pub fn deps_add(
     version: Option<String>,
 ) -> Result<RunResult, String> {
     if !valid_pkg_name(&name) {
-        return Err(format!("Invalid package name: {name}"));
+        return Err(
+            "Invalid package name. Use “package-name” or “@scope/package-name” with lowercase letters, numbers, dots, underscores, or hyphens.".to_string(),
+        );
+    }
+    if version
+        .as_deref()
+        .is_some_and(|value| !value.is_empty() && !valid_pkg_version(value))
+    {
+        return Err(
+            "Invalid package version. Use a dist-tag or semver version/range; URL and file specs are not supported."
+                .to_string(),
+        );
     }
     let spec = match version.as_deref() {
         Some(v) if !v.is_empty() && v != "latest" => format!("{name}@{v}"),
@@ -586,7 +701,9 @@ pub fn deps_remove(
     name: String,
 ) -> Result<RunResult, String> {
     if !valid_pkg_name(&name) {
-        return Err(format!("Invalid package name: {name}"));
+        return Err(
+            "Invalid package name. Use “package-name” or “@scope/package-name” with lowercase letters, numbers, dots, underscores, or hyphens.".to_string(),
+        );
     }
     run_npm(&app, &lock, &["uninstall", &name, "--save"])
 }
@@ -600,7 +717,15 @@ pub fn deps_update(
     version: String,
 ) -> Result<RunResult, String> {
     if !valid_pkg_name(&name) {
-        return Err(format!("Invalid package name: {name}"));
+        return Err(
+            "Invalid package name. Use “package-name” or “@scope/package-name” with lowercase letters, numbers, dots, underscores, or hyphens.".to_string(),
+        );
+    }
+    if !version.is_empty() && !valid_pkg_version(&version) {
+        return Err(
+            "Invalid package version. Use a dist-tag or semver version/range; URL and file specs are not supported."
+                .to_string(),
+        );
     }
     let spec = if version.is_empty() || version == "latest" {
         format!("{name}@latest")
@@ -614,5 +739,80 @@ pub fn deps_update(
 #[tauri::command]
 pub fn workspace_reveal(app: AppHandle) -> Result<String, String> {
     let ws = workspace_dir(&app)?;
-    Ok(ws.to_string_lossy().to_string())
+    let path = ws.to_string_lossy().to_string();
+    app.opener()
+        .open_path(&path, None::<&str>)
+        .map_err(|error| format!("Could not open the workspace folder: {error}"))?;
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{valid_pkg_name, valid_pkg_version};
+
+    #[test]
+    fn accepts_valid_package_names() {
+        for name in [
+            "react",
+            "left-pad",
+            "package_name",
+            "eslint.config",
+            "@types/node",
+            "@scope/package-name",
+        ] {
+            assert!(valid_pkg_name(name), "expected {name:?} to be valid");
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_or_unsafe_package_names() {
+        for name in [
+            "",
+            ".hidden",
+            "_private",
+            "UpperCase",
+            "scope/package",
+            "@scope",
+            "@/package",
+            "@scope/",
+            "@scope/package/extra",
+            "@scope/.package",
+            "package@1.0.0",
+            "package name",
+            "https://example.com/pkg",
+            "pkg;echo-secret",
+        ] {
+            assert!(!valid_pkg_name(name), "expected {name:?} to be invalid");
+        }
+    }
+
+    #[test]
+    fn rejects_names_over_npm_length_limit() {
+        assert!(valid_pkg_name(&"a".repeat(214)));
+        assert!(!valid_pkg_name(&"a".repeat(215)));
+    }
+
+    #[test]
+    fn validates_safe_versions_without_accepting_secret_bearing_urls() {
+        for version in ["latest", "1.2.3", "^1.2.0", ">=1 <2", "1.0.0-beta.1", "*"] {
+            assert!(
+                valid_pkg_version(version),
+                "expected {version:?} to be valid"
+            );
+        }
+        for version in [
+            "",
+            "file:../package",
+            "https://token@example.com/package.tgz",
+            "git+ssh://example.com/package",
+            "1.0.0\nsecret",
+            " latest",
+            "latest ",
+        ] {
+            assert!(
+                !valid_pkg_version(version),
+                "expected {version:?} to be invalid"
+            );
+        }
+    }
 }
