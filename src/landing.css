@@ -687,6 +687,7 @@ textarea {
 
 .section-heading h2,
 .open-source-section h2,
+.pricing-heading h2,
 .desktop-section h2,
 .final-cta h2 {
   margin: 0;
@@ -695,6 +696,7 @@ textarea {
 }
 
 .section-heading h2 em,
+.pricing-heading h2 em,
 .desktop-section h2 em {
   color: var(--ts);
   font-style: normal;
@@ -1215,26 +1217,21 @@ textarea {
 .pricing-card-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
   min-height: 20px;
   font-family: var(--display);
 }
 
-.pricing-card-head p,
 .pricing-card-head span {
   margin: 0;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.12em;
 }
 
-.pricing-card-head p {
-  color: var(--dim);
-}
-
 .pricing-card-head span {
-  padding: 6px 8px;
+  padding: 7px 10px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   color: var(--muted);
@@ -1253,29 +1250,31 @@ textarea {
 
 .price {
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
   min-height: 92px;
   font-family: var(--display);
 }
 
-.price sup {
-  margin: 13px 6px 0 0;
-  color: var(--js);
-  font-size: 20px;
-  font-weight: 700;
-}
-
 .price strong {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-size: clamp(72px, 7vw, 100px);
   line-height: 0.82;
-  letter-spacing: -0.1em;
+  letter-spacing: -0.08em;
+}
+
+.price-currency {
+  color: var(--js);
+  font-size: 0.38em;
+  letter-spacing: -0.04em;
 }
 
 .price small {
-  align-self: flex-end;
-  margin: 0 0 8px 14px;
-  color: var(--dim);
-  font-size: 9px;
+  margin: 0 0 5px 14px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
   white-space: nowrap;
 }
 
@@ -1283,7 +1282,7 @@ textarea {
   min-height: 54px;
   margin: 30px 0 25px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.55;
 }
 
@@ -1300,7 +1299,8 @@ textarea {
   position: relative;
   padding-left: 20px;
   color: var(--ink);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .pricing-card li::before {
