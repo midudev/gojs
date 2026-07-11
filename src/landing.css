@@ -135,7 +135,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 30px;
-  font: 600 11px/1 var(--display);
+  font: 600 12px/1 var(--display);
   letter-spacing: -0.01em;
   color: #9b9cab;
 }
@@ -183,12 +183,12 @@ textarea {
 
 .nav-cta {
   justify-self: end;
-  padding: 13px 18px;
+  padding: 14px 20px;
   border: 1px solid var(--ink);
   border-radius: 8px;
   background: var(--ink);
   color: var(--black);
-  font: 700 11px/1 var(--display);
+  font: 700 12px/1 var(--display);
   transition:
     border-color 180ms ease,
     background-color 180ms ease,

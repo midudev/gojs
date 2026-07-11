@@ -19,6 +19,8 @@
        does not flash white before the stylesheet loads. -->
   <style>
     html { background-color: #121212; color-scheme: dark; }
+    html:not([data-styles-ready]) body { visibility: hidden; }
+    html:not([data-styles-ready]) .site-header { transition: none !important; }
     html[data-shell='app'] #landing,
     html[data-shell='landing'] #app { display: none !important; }
   </style>
@@ -29,16 +31,7 @@
       document.documentElement.dataset.shell = isDesktop || isPlaygroundRoute ? 'app' : 'landing'
     })()
   </script>
-  <link id="landing-styles" rel="stylesheet" href="/src/landing.css" media="screen" />
-  <link id="app-styles" rel="stylesheet" href="/src/style.css" media="not all" />
   <link rel="stylesheet" href="/src/fonts.css" />
-  <script>
-    (function () {
-      if (document.documentElement.dataset.shell !== 'app') return
-      document.getElementById('landing-styles').media = 'not all'
-      document.getElementById('app-styles').media = 'all'
-    })()
-  </script>
   <!-- Theme anti-flash: before painting, read the saved theme and apply its real
        background color so there is no dark-to-light (or light-to-dark) jump
        while the editor and its theme finish loading. -->
@@ -639,7 +632,9 @@ return doubles</textarea>
 
   <div id="app">
     <header class="header">
-      <img src="/gojs.webp" alt="GoJS" class="header-logo" width="20" height="20" decoding="async">
+      <a class="header-home-link" href="/" target="_top" aria-label="Back to GoJS home">
+        <img src="/gojs.webp" alt="" class="header-logo" width="20" height="20" decoding="async">
+      </a>
       <div class="tabs-container">
         <!-- Tabs are rendered here. -->
       </div>
@@ -652,7 +647,7 @@ return doubles</textarea>
             <path d="M14 5m0 1a1 1 0 0 1 1 -1h2a1 1 0 0 1 1 1v12a1 1 0 0 1 -1 1h-2a1 1 0 0 1 -1 -1z" />
           </svg>
           <svg id="play-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="display: none">
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" hidden>
             <path stroke="none" d="M0 0h24v24H0z" fill="none" />
             <path d="M7 4v16l13 -8z" />
           </svg>
@@ -660,7 +655,7 @@ return doubles</textarea>
         <button id="ai-toggle-button" class="icon-button" title="AI enabled (click to disable)">
           <svg id="robot-off-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
             fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-            style="display: none">
+            hidden>
             <path stroke="none" d="M0 0h24v24H0z" fill="none" />
             <path d="M8 4h8a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2m-4 0h-4a2 2 0 0 1 -2 -2v-4" />
             <path d="M12 2v2" />
@@ -696,7 +691,7 @@ return doubles</textarea>
           </svg>
           <svg id="layout-vertical-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-            style="display: none">
+            hidden>
             <path d="M5 4v16" />
             <path d="M19 4v16" />
             <path d="M9 4h6v7h-6z" />
@@ -711,7 +706,7 @@ return doubles</textarea>
             <path d="M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11" />
           </svg>
           <svg id="runtime-node-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 256 292"
-            xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" style="display: none">
+            xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" hidden>
             <defs>
               <linearGradient id="nodejs__a" x1="68.188%" x2="27.823%" y1="17.487%" y2="89.755%">
                 <stop offset="0%" stop-color="#41873F" />
@@ -876,7 +871,7 @@ return doubles</textarea>
 
     <!-- Settings Modal -->
     <div id="history-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="history-title"
-      aria-describedby="history-subtitle" aria-hidden="true" style="display: none">
+      aria-describedby="history-subtitle" aria-hidden="true" hidden>
       <div class="modal-overlay"></div>
       <div class="modal-content">
         <div class="modal-header">
@@ -908,7 +903,7 @@ return doubles</textarea>
     </div>
 
     <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"
-      aria-describedby="settings-description" aria-hidden="true" style="display: none">
+      aria-describedby="settings-description" aria-hidden="true" hidden>
       <div class="modal-overlay"></div>
       <div class="modal-content">
         <div class="modal-header">

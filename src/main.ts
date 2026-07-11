@@ -42,7 +42,15 @@ import {
   isSerializedConsoleValue,
 } from './console-values'
 import { initHeaderPopovers } from './popovers'
-import { initTabs, getActiveTabId, getActiveTabTitle, flushTabsState } from './tabs'
+import {
+  initTabs,
+  getActiveTabId,
+  getActiveTabTitle,
+  flushTabsState,
+  newTab,
+  closeTab,
+  state as tabsState,
+} from './tabs'
 import {
   recordVersion,
   getHistory,
@@ -90,6 +98,7 @@ import { instrumentNodeCode, parseNativeLogLine } from './native-console'
 import { getLlamaInfo, type LlamaInfo, type LlamaModelInfo } from './llama-runtime'
 import { NODE_TYPES_FILES, NODE_TYPES_VERSION } from './node-types.generated'
 import type { Runtime } from './storage'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 // @ts-ignore
 import ExecutorWorker from './executor-worker?worker'
 
@@ -1885,6 +1894,79 @@ async function changeTheme(themeName: Theme): Promise<boolean> {
 // ejecución que pidió el formateo ya continúa después.
 let isFormatting = false
 
+let unlistenNativeMenu: UnlistenFn | null = null
+
+function runNativeEditCommand(command: 'undo' | 'redo') {
+  if (editor?.hasTextFocus?.()) {
+    editor.trigger('native-menu', command, null)
+    editor.focus()
+    return
+  }
+
+  const activeElement = document.activeElement
+  if (
+    activeElement instanceof HTMLInputElement ||
+    activeElement instanceof HTMLTextAreaElement ||
+    activeElement instanceof HTMLSelectElement ||
+    (activeElement instanceof HTMLElement && activeElement.isContentEditable)
+  ) {
+    document.execCommand(command)
+    return
+  }
+
+  editor?.trigger?.('native-menu', command, null)
+  editor?.focus?.()
+}
+
+async function setupNativeMenu() {
+  if (!isTauri() || unlistenNativeMenu) return
+
+  const unlisten = await listen<string>('menu-action', ({ payload }) => {
+    switch (payload) {
+      case 'new-tab':
+        newTab()
+        break
+      case 'save-version':
+        document.getElementById('history-save')?.click()
+        break
+      case 'close-tab':
+        if (tabsState.activeId) closeTab(tabsState.activeId)
+        break
+      case 'undo':
+      case 'redo':
+        runNativeEditCommand(payload)
+        break
+      case 'format-document':
+        void formatEditorCode()
+        break
+      case 'run-code':
+        void runCode()
+        break
+      case 'toggle-auto-run':
+        document.getElementById('autorun-toggle-button')?.click()
+        break
+      case 'toggle-layout':
+        document.getElementById('layout-toggle-button')?.click()
+        break
+      case 'toggle-ai':
+        document.getElementById('ai-toggle-button')?.click()
+        break
+      case 'version-history':
+        document.getElementById('history-button')?.click()
+        break
+      case 'settings':
+        document.getElementById('settings-button')?.click()
+        break
+    }
+  })
+
+  if (teardownStarted) {
+    unlisten()
+  } else {
+    unlistenNativeMenu = unlisten
+  }
+}
+
 // Configurar eventos del editor
 function setupEditorEvents() {
   // Escuchar cambios en el contenido del editor para ejecución automática
@@ -1980,6 +2062,8 @@ function teardownApp() {
 
   // Persistir cualquier cambio de pestaña pendiente (guardado con debounce).
   flushTabsState()
+  unlistenNativeMenu?.()
+  unlistenNativeMenu = null
 
   unmountChatResponseRoots()
   executorWorker?.terminate()
@@ -2363,7 +2447,7 @@ function initHistoryModal() {
   const open = () => {
     trigger = document.activeElement instanceof HTMLElement ? document.activeElement : historyButton
     refreshHistoryList()
-    historyModal.style.display = 'flex'
+    historyModal.hidden = false
     historyModal.classList.add('is-open')
     historyModal.setAttribute('aria-hidden', 'false')
     closeHistory?.focus()
@@ -2371,7 +2455,7 @@ function initHistoryModal() {
 
   const close = () => {
     historyModal.classList.remove('is-open')
-    historyModal.style.display = 'none'
+    historyModal.hidden = true
     historyModal.setAttribute('aria-hidden', 'true')
     trigger?.focus()
   }
@@ -2400,7 +2484,7 @@ function initHistoryModal() {
     ).filter((element) => element.tabIndex >= 0 && !element.closest('[hidden]') && element.offsetParent !== null)
 
   document.addEventListener('keydown', (e) => {
-    if (historyModal.style.display !== 'flex') return
+    if (historyModal.hidden) return
 
     if (e.key === 'Escape') {
       close()
@@ -2888,8 +2972,8 @@ function applyRuntimeUI(runtime: Runtime) {
   const select = $('#setting-runtime') as HTMLSelectElement | null
   const isNode = runtime === 'node'
 
-  if (browserIcon) browserIcon.style.display = isNode ? 'none' : ''
-  if (nodeIcon) nodeIcon.style.display = isNode ? '' : 'none'
+  browserIcon?.toggleAttribute('hidden', isNode)
+  nodeIcon?.toggleAttribute('hidden', !isNode)
   if (label) label.textContent = isNode ? 'Node' : 'JS'
   if (toggle) {
     toggle.title = isNode ? 'Runtime: Node.js (native) — click to switch' : 'Runtime: Browser sandbox — click to switch'
@@ -3828,8 +3912,8 @@ async function start() {
       const nextOrientation: PanelOrientation = isHorizontal ? 'vertical' : 'horizontal'
       const label = `Switch to ${nextOrientation} layout`
 
-      layoutHorizontalIcon.style.display = isHorizontal ? 'block' : 'none'
-      layoutVerticalIcon.style.display = isHorizontal ? 'none' : 'block'
+      layoutHorizontalIcon.toggleAttribute('hidden', !isHorizontal)
+      layoutVerticalIcon.toggleAttribute('hidden', isHorizontal)
       layoutToggleButton.title = label
       layoutToggleButton.setAttribute('aria-label', label)
       layoutToggleButton.setAttribute('aria-pressed', String(isHorizontal))
@@ -3871,21 +3955,20 @@ async function start() {
   const playIcon = $('#play-icon') as HTMLElement
 
   if (autorunToggleButton && pauseIcon && playIcon) {
+    const syncAutorunUI = () => {
+      pauseIcon.toggleAttribute('hidden', !autoRunEnabled)
+      playIcon.toggleAttribute('hidden', autoRunEnabled)
+      autorunToggleButton.title = autoRunEnabled
+        ? 'Auto-run enabled (click to disable)'
+        : 'Auto-run disabled (click to enable)'
+    }
+
+    syncAutorunUI()
+
     autorunToggleButton.addEventListener('click', () => {
       autoRunEnabled = !autoRunEnabled
-
-      // Alternar los iconos
-      if (autoRunEnabled) {
-        pauseIcon.style.display = 'block'
-        playIcon.style.display = 'none'
-        autorunToggleButton.title = 'Auto-run enabled (click to disable)'
-        // Ejecutar el código cuando se activa
-        runCode()
-      } else {
-        pauseIcon.style.display = 'none'
-        playIcon.style.display = 'block'
-        autorunToggleButton.title = 'Auto-run disabled (click to enable)'
-      }
+      syncAutorunUI()
+      if (autoRunEnabled) runCode()
     })
   }
 
@@ -3898,8 +3981,8 @@ async function start() {
 
   if (aiToggleButton && robotIcon && robotOffIcon && chatbotPanel) {
     const syncAiToggleUI = () => {
-      robotIcon.style.display = aiEnabled ? 'block' : 'none'
-      robotOffIcon.style.display = aiEnabled ? 'none' : 'block'
+      robotIcon.toggleAttribute('hidden', !aiEnabled)
+      robotOffIcon.toggleAttribute('hidden', aiEnabled)
       aiToggleButton.title = aiEnabled ? 'AI enabled (click to disable)' : 'AI disabled (click to enable)'
       chatbotPanel.style.display = aiEnabled ? 'flex' : 'none'
       chatbotPanel.classList.toggle('hidden', !aiEnabled)
@@ -3939,7 +4022,7 @@ async function start() {
 
     const openModal = () => {
       settingsTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : settingsButton
-      settingsModal.style.display = 'flex'
+      settingsModal.hidden = false
       settingsModal.classList.add('is-open')
       settingsModal.setAttribute('aria-hidden', 'false')
 
@@ -3950,7 +4033,7 @@ async function start() {
 
     const closeModal = () => {
       settingsModal.classList.remove('is-open')
-      settingsModal.style.display = 'none'
+      settingsModal.hidden = true
       settingsModal.setAttribute('aria-hidden', 'true')
       settingsTrigger?.focus()
     }
@@ -3960,7 +4043,7 @@ async function start() {
     modalOverlay?.addEventListener('click', closeModal)
 
     document.addEventListener('keydown', (e) => {
-      if (settingsModal.style.display !== 'flex') return
+      if (settingsModal.hidden) return
 
       if (e.key === 'Escape') {
         closeModal()
@@ -4480,12 +4563,17 @@ async function start() {
   // Inicializar popovers del header
   initHeaderPopovers()
 
+  void setupNativeMenu()
+
   // Configurar el runtime nativo de Node.js (solo tiene efecto en desktop)
   void setupNativeRuntimeUI()
 
   if (currentSettings.aiEnabled && !isLandingEmbed) {
     initChatbot()
   }
+
+  redistributePanelSpace()
+  requestAnimationFrame(() => editor?.layout())
 
   // Ejecutar código inicial si auto-run está habilitado
   if (autoRunEnabled) {

@@ -1,8 +1,9 @@
-@import 'tailwindcss';
-@source "../node_modules/streamdown/dist/index.js";
-
 hr {
   opacity: 0.1;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 div[data-code-block-container='true'],
@@ -162,14 +163,24 @@ body {
 
 /* Header */
 .header {
-  background-color: var(--editor-background, var(--color-bg-primary));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-text-primary) 3%, transparent), transparent),
+    color-mix(in srgb, var(--color-bg-secondary) 88%, var(--editor-background, var(--color-bg-primary)));
   border-bottom: 1px solid var(--surface-divider-color);
-  padding: 0 16px;
+  padding: 0 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
   height: 48px;
+}
+
+.header-home-link {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-right: 12px;
+  border-radius: 6px;
 }
 
 .header-logo {
@@ -179,7 +190,6 @@ body {
   aspect-ratio: 1 / 1;
   width: 20px;
   border-radius: 6px;
-  margin-right: 16px;
   object-fit: contain;
   flex-shrink: 0;
 }
@@ -188,34 +198,44 @@ body {
   flex: 1;
   display: flex;
   align-self: stretch;
-  align-items: stretch;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
 }
 
 .tabs-list {
   display: flex;
-  align-items: stretch;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
 }
 
 .tab-item {
+  position: relative;
+  min-width: 120px;
+  max-width: 240px;
+  height: 36px;
+  box-sizing: border-box;
   background: transparent;
-  border: none;
-  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--color-text-secondary) 88%, transparent);
   cursor: pointer;
-  padding: 0 4px 0 12px;
+  padding: 0 6px 0 14px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   transition:
     background-color 0.15s ease,
-    color 0.15s ease;
+    border-color 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease;
   white-space: nowrap;
 
   &:hover {
-    background-color: var(--surface-hover-background);
+    background-color: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+    border-color: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
     color: var(--color-text-primary);
 
     .tab-close {
@@ -231,8 +251,11 @@ body {
 
   &.active {
     background-color: var(--editor-background, var(--color-bg-primary));
+    border-color: var(--surface-divider-color);
     color: var(--color-text-primary);
     cursor: default;
+    font-weight: 600;
+    box-shadow: 0 1px 2px var(--surface-soft-shadow);
 
     .tab-close {
       visibility: visible;
@@ -243,6 +266,9 @@ body {
 
 .tab-name {
   font-size: 14px;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tab-name-input {
@@ -263,11 +289,15 @@ body {
 }
 
 .tab-close {
-  opacity: 0.6;
+  z-index: 1;
+  flex: 0 0 auto;
+  opacity: 0.62;
   line-height: 1;
   background: transparent;
   border: none;
-  padding: 4px;
+  width: 24px;
+  height: 24px;
+  padding: 5px;
   cursor: pointer;
   border-radius: 4px;
   color: inherit;
@@ -280,7 +310,7 @@ body {
 
   &:hover {
     opacity: 1;
-    background-color: var(--surface-hover-background);
+    background-color: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
   }
 
   &:active {
@@ -293,12 +323,14 @@ body {
   border: none;
   color: var(--color-text-secondary);
   cursor: pointer;
-  border-radius: 4px;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
   display: flex;
   justify-content: center;
   align-items: center;
   align-self: center;
-  padding: 6px;
+  padding: 7px;
   transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
     box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease, width 0.2s ease, height 0.2s ease;
   position: relative;
@@ -314,8 +346,15 @@ body {
 }
 
 .tab-add svg {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
+}
+
+.tab-item:focus-visible,
+.tab-add:focus-visible,
+.tab-close:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 
 .tabs-container::-webkit-scrollbar {
@@ -1327,6 +1366,10 @@ body {
 }
 
 /* --- Runtime toggle (header) --- */
+.runtime-toggle[hidden] {
+  display: none;
+}
+
 .runtime-toggle {
   width: auto;
   gap: 6px;
@@ -1340,8 +1383,15 @@ body {
 }
 
 .runtime-toggle.is-node {
-  color: var(--color-accent);
-  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  color: #6cc24a;
+  border-color: color-mix(in srgb, #6cc24a 48%, transparent);
+  background-color: color-mix(in srgb, #6cc24a 9%, transparent);
+}
+
+.runtime-toggle.is-node:hover {
+  color: #7dd957;
+  border-color: color-mix(in srgb, #6cc24a 68%, transparent);
+  background-color: color-mix(in srgb, #6cc24a 14%, transparent);
 }
 
 /* --- Dependencies manager --- */
@@ -4084,7 +4134,7 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   height: 40px;
 }
 
-.showcase-embed .header-logo {
+.showcase-embed .header-home-link {
   margin-inline: 2px 8px;
 }
 

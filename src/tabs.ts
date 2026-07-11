@@ -130,20 +130,39 @@ function render() {
 
   const list = document.createElement('div')
   list.className = 'tabs-list'
+  list.setAttribute('role', 'tablist')
+  list.setAttribute('aria-label', 'Open files')
 
-  state.tabs.forEach((t) => {
-    const tabEl = document.createElement('button')
+  const focusTab = (id: string) => {
+    requestAnimationFrame(() => {
+      container.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)?.focus()
+    })
+  }
+
+  const activateTab = (id: string) => {
+    switchTab(id)
+    focusTab(id)
+  }
+
+  state.tabs.forEach((t, index) => {
+    const isActive = t.id === state.activeId
+    const tabEl = document.createElement('div')
     tabEl.className = 'tab-item' + (t.id === state.activeId ? ' active' : '')
     tabEl.dataset.tabId = t.id
     tabEl.title = getTabTitle(t)
+    tabEl.setAttribute('role', 'tab')
+    tabEl.setAttribute('aria-label', getTabTitle(t))
+    tabEl.setAttribute('aria-selected', String(isActive))
+    tabEl.tabIndex = isActive ? 0 : -1
 
     const nameEl = document.createElement('span')
     nameEl.className = 'tab-name'
     nameEl.textContent = getTabTitle(t)
 
     const closeEl = document.createElement('button')
+    closeEl.type = 'button'
     closeEl.className = 'tab-close'
-    closeEl.setAttribute('aria-label', 'Close tab')
+    closeEl.setAttribute('aria-label', `Close ${getTabTitle(t)}`)
     closeEl.innerHTML = `
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-x">
         <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
@@ -156,7 +175,25 @@ function render() {
     // Añadir botón de cierre siempre para conservar área de click uniforme
     tabEl.appendChild(closeEl)
 
-    tabEl.addEventListener('click', () => switchTab(t.id))
+    tabEl.addEventListener('click', () => activateTab(t.id))
+    tabEl.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        activateTab(t.id)
+        return
+      }
+
+      let targetIndex = index
+      if (event.key === 'ArrowRight') targetIndex = (index + 1) % state.tabs.length
+      else if (event.key === 'ArrowLeft') targetIndex = (index - 1 + state.tabs.length) % state.tabs.length
+      else if (event.key === 'Home') targetIndex = 0
+      else if (event.key === 'End') targetIndex = state.tabs.length - 1
+      else return
+
+      event.preventDefault()
+      const target = state.tabs[targetIndex]
+      if (target) activateTab(target.id)
+    })
     closeEl.addEventListener('click', (e) => {
       e.stopPropagation()
       closeTab(t.id)
