@@ -20,6 +20,16 @@ describe('console value serialization', () => {
     expect(formatConsoleValueText(serialized)).toBe('[Set(1) { 1 }]')
   })
 
+  it('preserves Error details instead of serializing an empty object', () => {
+    const error = new TypeError('Failed to fetch')
+    error.stack = ''
+
+    const serialized = serializeConsoleValue(error)
+
+    expect(serialized).toEqual({ __type: 'Object', __value: 'TypeError: Failed to fetch' })
+    expect(formatConsoleValueText(serialized)).toBe('TypeError: Failed to fetch')
+  })
+
   it('avoids infinite recursion for circular Sets', () => {
     const circularSet = new Set<any>()
     circularSet.add(circularSet)

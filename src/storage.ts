@@ -90,7 +90,7 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   stickyScroll: true,
   indentGuides: true,
   renderWhitespace: 'selection',
-  debounceDelay: 800,
+  debounceDelay: 400,
   autoLogExpressions: true,
   formatOnPaste: true,
   formatOnType: true,

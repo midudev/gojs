@@ -94,7 +94,7 @@ import {
   type Dependency,
   type NodeInfo,
 } from './native-runtime'
-import { instrumentNodeCode, parseNativeLogLine } from './native-console'
+import { injectNativeExpressionLogging, instrumentNodeCode, parseNativeLogLine } from './native-console'
 import { getLlamaInfo, type LlamaInfo, type LlamaModelInfo } from './llama-runtime'
 import { NODE_TYPES_FILES, NODE_TYPES_VERSION } from './node-types.generated'
 import type { Runtime } from './storage'
@@ -124,6 +124,7 @@ type PanelOrientation = LayoutOrientation
 type ResizePanelsElement = HTMLElement & {
   getOrientation?: () => string
   requestLayoutUpdate?: () => void
+  setPanelVisible?: (panel: HTMLElement, visible: boolean) => void
 }
 
 type StorageEstimateWithDetails = StorageEstimate & {
@@ -336,6 +337,47 @@ function applyEditorLineHeightVar(fontSize: number) {
   document.documentElement.style.setProperty('--editor-font-size', `${fontSize}px`)
   document.documentElement.style.setProperty('--editor-font-family', getEditorFontFamilyStack())
 }
+
+function syncOutputGutterSpacing() {
+  const layout = editor?.getLayoutInfo?.()
+  if (!layout) return
+
+  const gap = layout.contentLeft - (layout.lineNumbersLeft + layout.lineNumbersWidth)
+  if (Number.isFinite(gap) && gap >= 0) {
+    document.documentElement.style.setProperty('--editor-gutter-content-gap', `${gap}px`)
+  }
+}
+
+const MIN_EDITOR_FONT_SIZE = 10
+const MAX_EDITOR_FONT_SIZE = 30
+
+function setEditorFontSize(fontSize: number) {
+  const nextFontSize = Math.min(MAX_EDITOR_FONT_SIZE, Math.max(MIN_EDITOR_FONT_SIZE, fontSize))
+  if (nextFontSize === currentSettings.fontSize) return
+
+  currentSettings = updateSetting(currentSettings, 'fontSize', nextFontSize)
+  applyEditorLineHeightVar(nextFontSize)
+  editor?.updateOptions({
+    fontSize: nextFontSize,
+    lineHeight: calculateLineHeight(nextFontSize),
+  })
+
+  const fontSizeInput = $('#setting-font-size') as HTMLInputElement | null
+  if (fontSizeInput) fontSizeInput.value = String(nextFontSize)
+}
+
+function handleFontSizeShortcut(event: KeyboardEvent) {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+
+  const increase = event.key === '+' || event.key === '=' || event.code === 'Equal'
+  const decrease = event.key === '-' || event.code === 'Minus'
+  if (!increase && !decrease) return
+
+  event.preventDefault()
+  event.stopPropagation()
+  setEditorFontSize(currentSettings.fontSize + (increase ? 1 : -1))
+}
+
 let currentThemeData: EditorThemeData | null = null
 
 // Web Worker para ejecución de código con timeout
@@ -404,6 +446,7 @@ if (isShowcaseEmbed) {
 if (isAgentDemoEmbed) {
   document.documentElement.classList.add('agent-demo-embed')
 }
+document.addEventListener('keydown', handleFontSizeShortcut, { capture: true })
 let chromePromptApiModelAvailable = false
 let chromePromptApiAvailabilityChecked = false
 
@@ -1425,6 +1468,8 @@ async function initEditor() {
     readOnly: false, // Asegurar que sea editable
     domReadOnly: false,
   })
+  syncOutputGutterSpacing()
+  editor.onDidLayoutChange(() => syncOutputGutterSpacing())
 
   // Registrar comando para formatear
   editor.addAction({
@@ -1465,8 +1510,8 @@ async function initEditor() {
     initialModel.dispose()
   }
 
-  // Inicializar el modal de historial de versiones
-  initHistoryModal()
+  // Inicializar el panel de historial de versiones
+  initHistoryPanel()
 }
 
 // Sincronizar el color de fondo del editor con la consola y header
@@ -1760,6 +1805,18 @@ function applyThemeUiColors(themeName: Theme, themeData: EditorThemeData) {
   root.style.setProperty(
     '--color-info',
     getThemeColor(colors, ['terminal.ansiBlue', 'charts.blue', 'textLink.foreground'], '#4fc3f7'),
+  )
+  root.style.setProperty(
+    '--editor-scrollbar-thumb',
+    getThemeColor(colors, ['scrollbarSlider.background'], 'rgba(121, 121, 121, 0.4)'),
+  )
+  root.style.setProperty(
+    '--editor-scrollbar-thumb-hover',
+    getThemeColor(colors, ['scrollbarSlider.hoverBackground'], 'rgba(100, 100, 100, 0.7)'),
+  )
+  root.style.setProperty(
+    '--editor-scrollbar-thumb-active',
+    getThemeColor(colors, ['scrollbarSlider.activeBackground'], 'rgba(191, 191, 191, 0.4)'),
   )
 
   document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', accent)
@@ -2204,8 +2261,8 @@ function restoreVersion(entry: HistoryEntry) {
 }
 
 function refreshHistoryIfOpen() {
-  const modal = document.getElementById('history-modal')
-  if (modal && modal.style.display === 'flex') refreshHistoryList()
+  const panel = document.getElementById('history-modal')
+  if (panel && !panel.hidden) refreshHistoryList()
 }
 
 // Idioma actual del editor, para colorear el diff con Monaco.
@@ -2380,14 +2437,20 @@ function renderHistoryCard(view: HistoryView, tabId: string, isCurrent: boolean)
   const restoreBtn = document.createElement('button')
   restoreBtn.type = 'button'
   restoreBtn.className = 'history-item-btn'
-  restoreBtn.textContent = 'Restore'
+  restoreBtn.setAttribute('aria-label', 'Restore version')
+  restoreBtn.title = 'Restore version'
+  restoreBtn.innerHTML =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M9 14l-4 -4l4 -4"/><path d="M5 10h11a4 4 0 1 1 0 8h-1"/></svg>'
   restoreBtn.disabled = isCurrent
   restoreBtn.addEventListener('click', () => restoreVersion(entry))
 
   const deleteBtn = document.createElement('button')
   deleteBtn.type = 'button'
   deleteBtn.className = 'history-item-btn history-item-btn-danger'
-  deleteBtn.textContent = 'Delete'
+  deleteBtn.setAttribute('aria-label', 'Delete version')
+  deleteBtn.title = 'Delete version'
+  deleteBtn.innerHTML =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M5 7l1 13h12l1 -13"/><path d="M9 7v-3h6v3"/></svg>'
   deleteBtn.addEventListener('click', () => {
     deleteEntry(tabId, entry.id)
     refreshHistoryList()
@@ -2434,35 +2497,41 @@ function refreshHistoryList() {
   listEl.appendChild(fragment)
 }
 
-function initHistoryModal() {
+function initHistoryPanel() {
   const historyButton = document.getElementById('history-button')
-  const historyModal = document.getElementById('history-modal')
+  const historyPanel = document.getElementById('history-modal')
   const closeHistory = document.getElementById('close-history')
   const saveButton = document.getElementById('history-save')
-  const overlay = historyModal?.querySelector('.modal-overlay')
-  if (!historyButton || !historyModal) return
+  if (!historyButton || !historyPanel) return
 
   let trigger: HTMLElement | null = null
 
   const open = () => {
     trigger = document.activeElement instanceof HTMLElement ? document.activeElement : historyButton
+    const settingsPanel = document.getElementById('settings-modal')
+    settingsPanel?.classList.remove('is-open')
+    settingsPanel?.setAttribute('aria-hidden', 'true')
+    if (settingsPanel) settingsPanel.hidden = true
+    document.getElementById('settings-button')?.setAttribute('aria-expanded', 'false')
+
     refreshHistoryList()
-    historyModal.hidden = false
-    historyModal.classList.add('is-open')
-    historyModal.setAttribute('aria-hidden', 'false')
+    historyPanel.hidden = false
+    historyPanel.classList.add('is-open')
+    historyPanel.setAttribute('aria-hidden', 'false')
+    historyButton.setAttribute('aria-expanded', 'true')
     closeHistory?.focus()
   }
 
   const close = () => {
-    historyModal.classList.remove('is-open')
-    historyModal.hidden = true
-    historyModal.setAttribute('aria-hidden', 'true')
+    historyPanel.classList.remove('is-open')
+    historyPanel.hidden = true
+    historyPanel.setAttribute('aria-hidden', 'true')
+    historyButton.setAttribute('aria-expanded', 'false')
     trigger?.focus()
   }
 
   historyButton.addEventListener('click', open)
   closeHistory?.addEventListener('click', close)
-  overlay?.addEventListener('click', close)
 
   saveButton?.addEventListener('click', () => {
     if (!editor) return
@@ -2476,38 +2545,11 @@ function initHistoryModal() {
     refreshHistoryList()
   })
 
-  const getFocusableModalElements = () =>
-    Array.from(
-      historyModal.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter((element) => element.tabIndex >= 0 && !element.closest('[hidden]') && element.offsetParent !== null)
-
   document.addEventListener('keydown', (e) => {
-    if (historyModal.hidden) return
+    if (historyPanel.hidden) return
 
     if (e.key === 'Escape') {
       close()
-      return
-    }
-
-    if (e.key === 'Tab') {
-      const focusableElements = getFocusableModalElements()
-      const firstElement = focusableElements[0]
-      const lastElement = focusableElements[focusableElements.length - 1]
-
-      if (!firstElement || !lastElement) {
-        e.preventDefault()
-        return
-      }
-
-      if (e.shiftKey && document.activeElement === firstElement) {
-        e.preventDefault()
-        lastElement.focus()
-      } else if (!e.shiftKey && document.activeElement === lastElement) {
-        e.preventDefault()
-        firstElement.focus()
-      }
     }
   })
 }
@@ -2910,9 +2952,13 @@ async function runCodeNative(code: string, addLog: AddLogFn) {
   // re-run mientras la previa aún corría) para no acumular procesos.
   await stopNative()
 
+  // Las expresiones se envuelven sin añadir líneas para que los stacks nativos
+  // sigan coincidiendo con las líneas del editor.
+  const codeWithExpressions = injectNativeExpressionLogging(jsCode, currentSettings.autoLogExpressions)
+
   // Instrumentar `console.*` para que la salida llegue tipada (log/info/warn/
-  // error/table/count/time) y enlazada a su línea, igual que en el sandbox.
-  const instrumentedCode = instrumentNodeCode(jsCode).replace(
+  // error/table/count/time/expression) y enlazada a su línea, igual que en el sandbox.
+  const instrumentedCode = instrumentNodeCode(codeWithExpressions).replace(
     'return s.length === 1 ? s[0] : s;',
     'return s.length === 1 ? s[0] : { __type: "Arguments", __values: s };',
   )
@@ -2974,7 +3020,7 @@ function applyRuntimeUI(runtime: Runtime) {
 
   browserIcon?.toggleAttribute('hidden', isNode)
   nodeIcon?.toggleAttribute('hidden', !isNode)
-  if (label) label.textContent = isNode ? 'Node' : 'JS'
+  if (label) label.textContent = isNode ? 'Node' : 'Web'
   if (toggle) {
     toggle.title = isNode ? 'Runtime: Node.js (native) — click to switch' : 'Runtime: Browser sandbox — click to switch'
     toggle.classList.toggle('is-node', isNode)
@@ -3984,8 +4030,17 @@ async function start() {
       robotIcon.toggleAttribute('hidden', !aiEnabled)
       robotOffIcon.toggleAttribute('hidden', aiEnabled)
       aiToggleButton.title = aiEnabled ? 'AI enabled (click to disable)' : 'AI disabled (click to enable)'
-      chatbotPanel.style.display = aiEnabled ? 'flex' : 'none'
-      chatbotPanel.classList.toggle('hidden', !aiEnabled)
+      aiToggleButton.setAttribute('aria-pressed', String(aiEnabled))
+
+      // Clear the legacy visibility class so a Tauri HMR session cannot keep
+      // forcing `display: none !important` after the new `hidden` state changes.
+      chatbotPanel.classList.remove('hidden')
+
+      if (resizePanelsElement?.setPanelVisible) {
+        resizePanelsElement.setPanelVisible(chatbotPanel, aiEnabled)
+      } else {
+        chatbotPanel.toggleAttribute('hidden', !aiEnabled)
+      }
     }
 
     syncAiToggleUI()
@@ -4004,69 +4059,48 @@ async function start() {
     })
   }
 
-  // Event listener para el botón de settings
+  // Event listener para el panel de settings
   const settingsButton = document.getElementById('settings-button')
-  const settingsModal = document.getElementById('settings-modal')
+  const settingsPanel = document.getElementById('settings-modal')
   const closeSettings = document.getElementById('close-settings')
-  const modalOverlay = settingsModal?.querySelector('.modal-overlay')
 
-  if (settingsButton && settingsModal) {
+  if (settingsButton && settingsPanel) {
     let settingsTrigger: HTMLElement | null = null
 
-    const getFocusableModalElements = () =>
-      Array.from(
-        settingsModal.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ).filter((element) => element.tabIndex >= 0 && !element.closest('[hidden]') && element.offsetParent !== null)
-
-    const openModal = () => {
+    const openPanel = () => {
       settingsTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : settingsButton
-      settingsModal.hidden = false
-      settingsModal.classList.add('is-open')
-      settingsModal.setAttribute('aria-hidden', 'false')
+      const historyPanel = document.getElementById('history-modal')
+      historyPanel?.classList.remove('is-open')
+      historyPanel?.setAttribute('aria-hidden', 'true')
+      if (historyPanel) historyPanel.hidden = true
+      document.getElementById('history-button')?.setAttribute('aria-expanded', 'false')
 
-      const activePanel = settingsModal.querySelector<HTMLElement>('.settings-panel.active')
-      const firstPanelControl = activePanel?.querySelector<HTMLElement>('select, input, button:not([disabled])')
+      settingsPanel.hidden = false
+      settingsPanel.classList.add('is-open')
+      settingsPanel.setAttribute('aria-hidden', 'false')
+      settingsButton.setAttribute('aria-expanded', 'true')
+
+      const activeSettingsSection = settingsPanel.querySelector<HTMLElement>('.settings-panel.active')
+      const firstPanelControl = activeSettingsSection?.querySelector<HTMLElement>('select, input, button:not([disabled])')
       ;(firstPanelControl ?? closeSettings)?.focus()
     }
 
-    const closeModal = () => {
-      settingsModal.classList.remove('is-open')
-      settingsModal.hidden = true
-      settingsModal.setAttribute('aria-hidden', 'true')
+    const closePanel = () => {
+      settingsPanel.classList.remove('is-open')
+      settingsPanel.hidden = true
+      settingsPanel.setAttribute('aria-hidden', 'true')
+      settingsButton.setAttribute('aria-expanded', 'false')
       settingsTrigger?.focus()
     }
 
-    settingsButton.addEventListener('click', openModal)
-    closeSettings?.addEventListener('click', closeModal)
-    modalOverlay?.addEventListener('click', closeModal)
+    settingsButton.addEventListener('click', openPanel)
+    closeSettings?.addEventListener('click', closePanel)
 
     document.addEventListener('keydown', (e) => {
-      if (settingsModal.hidden) return
+      if (settingsPanel.hidden) return
 
       if (e.key === 'Escape') {
-        closeModal()
-        return
-      }
-
-      if (e.key === 'Tab') {
-        const focusableElements = getFocusableModalElements()
-        const firstElement = focusableElements[0]
-        const lastElement = focusableElements[focusableElements.length - 1]
-
-        if (!firstElement || !lastElement) {
-          e.preventDefault()
-          return
-        }
-
-        if (e.shiftKey && document.activeElement === firstElement) {
-          e.preventDefault()
-          lastElement.focus()
-        } else if (!e.shiftKey && document.activeElement === lastElement) {
-          e.preventDefault()
-          firstElement.focus()
-        }
+        closePanel()
       }
     })
 
@@ -4307,13 +4341,7 @@ async function start() {
 
     fontSizeInput?.addEventListener('input', (e) => {
       const size = parseInt((e.target as HTMLInputElement).value, 10)
-      currentSettings = updateSetting(currentSettings, 'fontSize', size)
-      const lineHeight = calculateLineHeight(currentSettings.fontSize)
-      applyEditorLineHeightVar(currentSettings.fontSize)
-      editor?.updateOptions({
-        fontSize: currentSettings.fontSize,
-        lineHeight: lineHeight,
-      })
+      if (!Number.isNaN(size)) setEditorFontSize(size)
     })
 
     aiModelSelect?.addEventListener('change', async (e) => {

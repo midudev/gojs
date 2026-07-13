@@ -50,6 +50,7 @@ class ResizePanels extends HTMLElement {
   private handleSlotChangeBound: () => void
   private globalListenersAttached: boolean = false
   private isUpdatingLayout: boolean = false
+  private panelVisibilityOverrides = new WeakMap<HTMLElement, boolean>()
 
   constructor() {
     super()
@@ -578,7 +579,10 @@ class ResizePanels extends HTMLElement {
       const slotEl = panel.querySelector('slot')
       const assigned = slotEl?.assignedElements()[0] as HTMLElement | undefined
       const wasVisible = panel.dataset.visible === 'true'
-      const currentlyVisible = assigned ? this.isElementVisible(assigned) : false
+      const visibilityOverride = assigned ? this.panelVisibilityOverrides.get(assigned) : undefined
+      const currentlyVisible = assigned
+        ? visibilityOverride ?? this.isElementVisible(assigned)
+        : false
 
       if (wasVisible && !currentlyVisible) {
         const rect = panel.getBoundingClientRect()
@@ -681,6 +685,16 @@ class ResizePanels extends HTMLElement {
   }
 
   public requestLayoutUpdate() {
+    this.scheduleLayoutUpdate()
+  }
+
+  public setPanelVisible(panel: HTMLElement, visible: boolean) {
+    if (panel.parentElement !== this) return
+
+    this.panelVisibilityOverrides.set(panel, visible)
+    panel.toggleAttribute('hidden', !visible)
+    panel.style.display = visible ? 'flex' : 'none'
+    this.updateVisiblePanels()
     this.scheduleLayoutUpdate()
   }
 

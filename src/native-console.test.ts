@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import * as acorn from 'acorn'
-import { instrumentNodeCode, NATIVE_LOG_SENTINEL, parseNativeLogLine } from './native-console'
+import {
+  injectNativeExpressionLogging,
+  instrumentNodeCode,
+  NATIVE_LOG_SENTINEL,
+  parseNativeLogLine,
+} from './native-console'
 
 const parsesAsModule = (code: string) => {
   try {
@@ -10,6 +15,8 @@ const parsesAsModule = (code: string) => {
     return false
   }
 }
+
+const hasNodeProcess = typeof process !== 'undefined' && Boolean(process.stdout)
 
 describe('parseNativeLogLine', () => {
   it('devuelve null para salida en crudo (sin centinela)', () => {
@@ -27,6 +34,11 @@ describe('parseNativeLogLine', () => {
     expect(parseNativeLogLine(line)?.columns).toEqual(['a'])
   })
 
+  it('acepta resultados de expresiones instrumentadas', () => {
+    const line = NATIVE_LOG_SENTINEL + JSON.stringify({ type: 'expression', line: 1, data: 4 })
+    expect(parseNativeLogLine(line)).toEqual({ type: 'expression', line: 1, data: 4, columns: undefined })
+  })
+
   it('normaliza líneas ausentes o no positivas a null', () => {
     const noLine = NATIVE_LOG_SENTINEL + JSON.stringify({ type: 'log', data: 1 })
     const zeroLine = NATIVE_LOG_SENTINEL + JSON.stringify({ type: 'log', line: 0, data: 1 })
@@ -37,6 +49,49 @@ describe('parseNativeLogLine', () => {
   it('rechaza tipos desconocidos y JSON malformado', () => {
     expect(parseNativeLogLine(NATIVE_LOG_SENTINEL + JSON.stringify({ type: 'group', data: 1 }))).toBeNull()
     expect(parseNativeLogLine(NATIVE_LOG_SENTINEL + '{not json')).toBeNull()
+  })
+})
+
+describe('injectNativeExpressionLogging', () => {
+  it('instrumenta expresiones sin desplazar las líneas posteriores', () => {
+    const code = "2 + 2\nconsole.log('hola')"
+    const output = injectNativeExpressionLogging(code)
+
+    expect(output).toContain('console.__logExpression__((2 + 2), 1);')
+    expect(output.split('\n')).toHaveLength(code.split('\n').length)
+    expect(output.split('\n')[1]).toBe("console.log('hola')")
+    expect(parsesAsModule(output)).toBe(true)
+  })
+
+  it('respeta la preferencia que desactiva el logging automático', () => {
+    const code = '2 + 2'
+    expect(injectNativeExpressionLogging(code, false)).toBe(code)
+  })
+
+  it.runIf(hasNodeProcess)('emite el valor de la expresión con su línea original al ejecutarse', () => {
+    const writes: string[] = []
+    const originalConsole = globalThis.console
+    const originalWrite = process.stdout.write
+    globalThis.console = { ...originalConsole } as Console
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      writes.push(String(chunk))
+      return true
+    }) as typeof process.stdout.write
+
+    try {
+      const code = instrumentNodeCode(injectNativeExpressionLogging('2 + 2'))
+      new Function(code)()
+    } finally {
+      process.stdout.write = originalWrite
+      globalThis.console = originalConsole
+    }
+
+    expect(writes.map((line) => parseNativeLogLine(line.trim()))).toContainEqual({
+      type: 'expression',
+      line: 1,
+      data: 4,
+      columns: undefined,
+    })
   })
 })
 

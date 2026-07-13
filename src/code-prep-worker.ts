@@ -11,6 +11,7 @@ import {
   transpileToJs,
   collectNodeBuiltinImports,
   transformImports,
+  wrapConsoleCallbacks,
   injectExpressionLogging,
   lineMap,
 } from './console'
@@ -63,11 +64,16 @@ self.onmessage = async (e: MessageEvent<PrepareRequest>) => {
     // 3. imports estáticos -> import() dinámicos
     const codeWithImports = transformImports(jsCode)
 
-    // 4. instrumentación de tiempos (antes del logging de expresiones para que su
-    //    lineMap siga siendo correcto)
-    const codeWithTimings = lineTimings ? injectTimings(codeWithImports) : codeWithImports
+    // 4. Envolver métodos de console usados como callbacks para conservar su línea.
+    const codeWithConsoleCallbacks = wrapConsoleCallbacks(codeWithImports)
 
-    // 5. logging de expresiones (rellena el lineMap del módulo)
+    // 5. instrumentación de tiempos (antes del logging de expresiones para que su
+    //    lineMap siga siendo correcto)
+    const codeWithTimings = lineTimings
+      ? injectTimings(codeWithConsoleCallbacks)
+      : codeWithConsoleCallbacks
+
+    // 6. logging de expresiones (rellena el lineMap del módulo)
     const modifiedCode = injectExpressionLogging(codeWithTimings, { enabled: autoLogExpressions })
 
     const lineMapObj: Record<number, number> = {}

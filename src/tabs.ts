@@ -130,6 +130,7 @@ function render() {
 
   const list = document.createElement('div')
   list.className = 'tabs-list'
+  list.dataset.tauriDragRegion = ''
   list.setAttribute('role', 'tablist')
   list.setAttribute('aria-label', 'Open files')
 
@@ -176,6 +177,12 @@ function render() {
     tabEl.appendChild(closeEl)
 
     tabEl.addEventListener('click', () => activateTab(t.id))
+    tabEl.addEventListener('auxclick', (event) => {
+      if (event.button !== 1) return
+      event.preventDefault()
+      event.stopPropagation()
+      closeTab(t.id)
+    })
     tabEl.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault()

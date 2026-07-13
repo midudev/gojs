@@ -83,6 +83,13 @@ export function serializeConsoleValue(value: any, seen = new WeakSet<object>()):
       }
     }
 
+    if (value instanceof Error) {
+      return {
+        __type: 'Object',
+        __value: value.stack || `${value.name}: ${value.message}`,
+      }
+    }
+
     if (Array.isArray(value)) {
       return value.map((item) => serializeConsoleValue(item, seen))
     }

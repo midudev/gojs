@@ -1,10 +1,11 @@
-const isDesktop = '__TAURI_INTERNALS__' in window
+const isDesktop = '__TAURI_INTERNALS__' in window || '__TAURI__' in window
 const isPlaygroundRoute = window.location.pathname.startsWith('/app')
 const embedMode = new URLSearchParams(window.location.search).get('embed')
 const isLightweightEmbed = embedMode === 'landing' || embedMode === 'showcase' || embedMode === 'agent-demo'
 
 async function start(): Promise<void> {
   if (isDesktop || isPlaygroundRoute) {
+    document.documentElement.classList.toggle('is-desktop', isDesktop)
     if (!isLightweightEmbed) await import('./tailwind.css')
     await import('./style.css')
     document.querySelector('#landing')?.setAttribute('hidden', '')

@@ -631,14 +631,14 @@ return doubles</textarea>
   </div>
 
   <div id="app">
-    <header class="header">
+    <header class="header" data-tauri-drag-region>
       <a class="header-home-link" href="/" target="_top" aria-label="Back to GoJS home">
         <img src="/gojs.webp" alt="" class="header-logo" width="20" height="20" decoding="async">
       </a>
-      <div class="tabs-container">
+      <div class="tabs-container" data-tauri-drag-region>
         <!-- Tabs are rendered here. -->
       </div>
-      <div class="header-actions">
+      <div class="header-actions" data-tauri-drag-region>
         <button id="autorun-toggle-button" class="icon-button" title="Auto-run">
           <svg id="pause-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -700,11 +700,10 @@ return doubles</textarea>
         </button>
         <button id="runtime-toggle-button" class="icon-button runtime-toggle" type="button" hidden
           title="Runtime: Browser sandbox" aria-label="Switch execution runtime">
-          <svg id="runtime-browser-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-            <path d="M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11" />
-          </svg>
+          <span id="runtime-browser-icon" class="runtime-web-icon" aria-hidden="true">
+            <span class="runtime-language-logo runtime-language-logo-js">JS</span>
+            <span class="runtime-language-logo runtime-language-logo-ts">TS</span>
+          </span>
           <svg id="runtime-node-icon" aria-hidden="true" width="20" height="20" viewBox="0 0 256 292"
             xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" hidden>
             <defs>
@@ -743,7 +742,7 @@ return doubles</textarea>
               d="M249.756 223.898c3.258-1.9 5.701-5.158 6.787-8.687L130.579.204c-3.258-.543-6.787-.272-9.773 1.628L6.786 67.53l122.979 224.238c1.628-.272 3.529-.815 5.158-1.63l114.833-66.239Z"
               mask="url(#nodejs__g)" />
           </svg>
-          <span id="runtime-label" class="runtime-label">JS</span>
+          <span id="runtime-label" class="runtime-label">Web</span>
         </button>
         <a id="issue-button" class="icon-button" href="https://github.com/midudev/gojs-issues/issues/new"
           target="_blank" rel="noopener noreferrer" title="New issue">
@@ -761,7 +760,8 @@ return doubles</textarea>
             <path d="M20 7l-3.75 2.4" />
           </svg>
         </a>
-        <button id="history-button" class="icon-button" title="Version history" aria-label="Version history">
+        <button id="history-button" class="icon-button" title="Version history" aria-label="Version history"
+          aria-controls="history-modal" aria-expanded="false">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -769,7 +769,8 @@ return doubles</textarea>
             <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
           </svg>
         </button>
-        <button id="settings-button" class="icon-button" title="Settings">
+        <button id="settings-button" class="icon-button" title="Settings" aria-label="Settings"
+          aria-controls="settings-modal" aria-expanded="false">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -869,18 +870,18 @@ return doubles</textarea>
     <div id="tooltip-issue" class="tooltip" popover="hint">New issue</div>
     <div id="tooltip-settings" class="tooltip" popover="hint">Settings</div>
 
-    <!-- Settings Modal -->
-    <div id="history-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="history-title"
+    <!-- Editor side panels -->
+    <aside id="history-modal" class="editor-side-panel history-side-panel" aria-labelledby="history-title"
       aria-describedby="history-subtitle" aria-hidden="true" hidden>
-      <div class="modal-overlay"></div>
-      <div class="modal-content">
+      <div class="modal-content side-panel-surface">
         <div class="modal-header">
           <div>
             <h2 id="history-title">Version history</h2>
             <p id="history-subtitle" class="modal-subtitle"></p>
           </div>
           <div class="history-header-actions">
-            <button id="history-save" class="history-btn" type="button" title="Save the current code as a version">
+            <button id="history-save" class="history-btn" type="button" aria-label="Save version"
+              title="Save the current code as a version">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
                 stroke-linecap="round" stroke-linejoin="round">
                 <path stroke="none" d="M0 0h24v24H0z" fill="none" />
@@ -888,7 +889,6 @@ return doubles</textarea>
                 <path d="M12 14m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
                 <path d="M14 4l0 4l-6 0l0 -4" />
               </svg>
-              <span>Save version</span>
             </button>
             <button id="close-history" class="close-button" type="button" aria-label="Close history">×</button>
           </div>
@@ -900,12 +900,11 @@ return doubles</textarea>
           </p>
         </div>
       </div>
-    </div>
+    </aside>
 
-    <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"
-      aria-describedby="settings-description" aria-hidden="true" hidden>
-      <div class="modal-overlay"></div>
-      <div class="modal-content">
+    <aside id="settings-modal" class="editor-side-panel settings-side-panel" aria-labelledby="settings-title"
+      aria-hidden="true" hidden>
+      <div class="modal-content side-panel-surface">
         <div class="modal-header">
           <div>
             <h2 id="settings-title">Settings</h2>
@@ -1120,7 +1119,7 @@ return doubles</textarea>
               </div>
               <div class="setting-item">
                 <label for="setting-debounce">Auto-run delay (ms)</label>
-                <input type="number" id="setting-debounce" min="100" max="5000" step="100" value="800" />
+                <input type="number" id="setting-debounce" min="100" max="5000" step="100" value="400" />
               </div>
               <div class="setting-item-checkbox">
                 <input type="checkbox" id="setting-auto-log-expressions" checked />
@@ -1186,7 +1185,7 @@ return doubles</textarea>
           </div>
         </div>
       </div>
-    </div>
+    </aside>
   </div>
 
   <script type="module" src="/src/entry.ts"></script>

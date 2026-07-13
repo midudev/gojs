@@ -9,6 +9,7 @@ import {
   resolveModuleSpecifier,
   transformImports,
   transpileToJs,
+  wrapConsoleCallbacks,
 } from './console'
 
 describe('expression logging injection', () => {
@@ -84,6 +85,29 @@ describe('expression logging injection', () => {
     expect(lineMap.get(2)).toBe(1)
     expect(lineMap.get(3)).toBe(2)
     expect(lineMap.get(4)).toBe(3)
+  })
+})
+
+describe('console callbacks', () => {
+  it('wraps console.error passed to catch without changing its source line', () => {
+    const code = "fetch('https://example.com')\n  .catch(console.error)"
+    const transformed = wrapConsoleCallbacks(code)
+
+    expect(transformed.split('\n')).toHaveLength(2)
+    expect(transformed.split('\n')[1]).toContain(
+      '.catch((...__console_args__) => console.error(...__console_args__))',
+    )
+
+    const instrumented = injectExpressionLogging(transformed)
+    const consoleLine =
+      instrumented.split('\n').findIndex((line) => line.includes('console.error(...__console_args__)')) + 1
+    expect(lineMap.get(consoleLine)).toBe(2)
+  })
+
+  it('leaves direct console calls unchanged', () => {
+    const code = "console.error('boom')"
+
+    expect(wrapConsoleCallbacks(code)).toBe(code)
   })
 })
 

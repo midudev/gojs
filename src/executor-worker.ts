@@ -2,6 +2,12 @@
 // Este worker ejecuta código en un hilo separado para evitar congelar la UI
 
 import { serializeConsoleArguments, serializeConsoleValue } from './console-values'
+import {
+  extractGeneratedLine,
+  USER_CODE_SOURCE_URL,
+  withSourceUrl,
+  WRAPPER_PROBE_SOURCE_URL,
+} from './executor-stack'
 
 interface ExecuteMessage {
   type: 'execute'
@@ -156,37 +162,16 @@ const customConsole = {
   },
 }
 
-// Extrae el número de línea "crudo" (dentro de la función anónima) del stack trace.
-// Funciona tanto para Chrome (<anonymous>:L:C) como para Firefox (eval:L:C).
-function extractRawLineNumber(stack: string): number | null {
-  const lines = stack.split('\n')
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    const chromeMatch = line.match(/<anonymous>:(\d+):\d+\)?$/)
-    const firefoxMatch = line.match(/(?:eval|Function):(\d+):\d+/)
-
-    const match = chromeMatch || firefoxMatch
-
-    if (match && i > 0) {
-      return Number(match[1])
-    }
-  }
-
-  return null
-}
-
 // El wrapper de AsyncFunction añade un número fijo de líneas antes del cuerpo del
 // usuario, y ese número varía según el motor (V8 añade 2, otros pueden diferir).
 // Lo calibramos en tiempo de ejecución con una sonda cuya llamada está en la línea 1.
 function detectWrapperOffset(): number {
   try {
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-    const probe = new AsyncFunction('__mark', '__mark()')
+    const probe = new AsyncFunction('__mark', withSourceUrl('__mark()', WRAPPER_PROBE_SOURCE_URL))
     let probeLine: number | null = null
     probe(() => {
-      probeLine = extractRawLineNumber(new Error().stack || '')
+      probeLine = extractGeneratedLine(new Error().stack || '', WRAPPER_PROBE_SOURCE_URL)
     })
     if (probeLine != null) {
       // La llamada a __mark() está en la línea 1 del cuerpo, así que el offset es probeLine - 1
@@ -202,7 +187,7 @@ const WRAPPER_OFFSET = detectWrapperOffset()
 
 // Función para extraer número de línea del stack trace (mapeado a la línea original)
 function extractLineNumber(stack: string): number | null {
-  const rawLineNum = extractRawLineNumber(stack)
+  const rawLineNum = extractGeneratedLine(stack, USER_CODE_SOURCE_URL)
   if (rawLineNum == null) return null
 
   // Descontar el desfase del wrapper para obtener la línea dentro del código del usuario
@@ -233,7 +218,7 @@ self.onmessage = async (e: MessageEvent<ExecuteMessage>) => {
     try {
       // Ejecutar código en un contexto aislado con console personalizado
       const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-      const fn = new AsyncFunction('console', code)
+      const fn = new AsyncFunction('console', withSourceUrl(code, USER_CODE_SOURCE_URL))
 
       // Ejecutar y esperar promesas
       await Promise.resolve(fn(customConsole))

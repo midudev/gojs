@@ -205,6 +205,57 @@ export function collectNodeBuiltinImports(code: string): string[] {
   return [...found]
 }
 
+const CONSOLE_CALLBACK_METHODS = new Set(['log', 'info', 'warn', 'error', 'table', 'count', 'countReset', 'time', 'timeEnd'])
+
+/**
+ * Conserva la línea de origen cuando un método de console se pasa como callback
+ * (`promise.catch(console.error)`). La llamada nativa pierde el frame del código
+ * de usuario; el wrapper vuelve a ejecutar el método en la misma línea.
+ */
+export function wrapConsoleCallbacks(code: string): string {
+  let ast: any
+  try {
+    ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' })
+  } catch {
+    return code
+  }
+
+  const replacements: Array<{ start: number; end: number; method: string }> = []
+
+  const walk = (node: any, parent: any = null) => {
+    if (!node || typeof node.type !== 'string') return
+
+    if (
+      node.type === 'MemberExpression' &&
+      !node.computed &&
+      node.object?.type === 'Identifier' &&
+      node.object.name === 'console' &&
+      node.property?.type === 'Identifier' &&
+      CONSOLE_CALLBACK_METHODS.has(node.property.name) &&
+      !(parent?.type === 'CallExpression' && parent.callee === node)
+    ) {
+      replacements.push({ start: node.start, end: node.end, method: node.property.name })
+    }
+
+    for (const key of Object.keys(node)) {
+      if (key === 'start' || key === 'end') continue
+      const child = node[key]
+      if (Array.isArray(child)) child.forEach((item) => walk(item, node))
+      else if (child && typeof child.type === 'string') walk(child, node)
+    }
+  }
+
+  walk(ast)
+
+  let result = code
+  for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
+    const wrapper = `(...__console_args__) => console.${replacement.method}(...__console_args__)`
+    result = result.slice(0, replacement.start) + wrapper + result.slice(replacement.end)
+  }
+
+  return result
+}
+
 /**
  * Construye un import map (formato WICG) que mapea cada paquete npm importado a su
  * URL en el CDN ESM, incluyendo la entrada con barra final para resolver subrutas.

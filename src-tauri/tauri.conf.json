@@ -5,7 +5,7 @@
   "identifier": "app.gojs.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:5555",
+    "devUrl": "http://127.0.0.1:5555",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
@@ -20,6 +20,13 @@
         "resizable": true,
         "fullscreen": false,
         "center": true,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 21.5
+        },
         "dragDropEnabled": false
       }
     ],
