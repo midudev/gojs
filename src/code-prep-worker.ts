@@ -12,6 +12,7 @@ import {
   collectNodeBuiltinImports,
   transformImports,
   wrapConsoleCallbacks,
+  instrumentConsoleLineNumbers,
   injectExpressionLogging,
   lineMap,
 } from './console'
@@ -67,13 +68,17 @@ self.onmessage = async (e: MessageEvent<PrepareRequest>) => {
     // 4. Envolver métodos de console usados como callbacks para conservar su línea.
     const codeWithConsoleCallbacks = wrapConsoleCallbacks(codeWithImports)
 
-    // 5. instrumentación de tiempos (antes del logging de expresiones para que su
+    // 5. Fijar explícitamente la línea de cada llamada a console. En WKWebView,
+    //    Error.stack puede omitir el frame del código evaluado.
+    const codeWithConsoleLines = instrumentConsoleLineNumbers(codeWithConsoleCallbacks)
+
+    // 6. instrumentación de tiempos (antes del logging de expresiones para que su
     //    lineMap siga siendo correcto)
     const codeWithTimings = lineTimings
-      ? injectTimings(codeWithConsoleCallbacks)
-      : codeWithConsoleCallbacks
+      ? injectTimings(codeWithConsoleLines)
+      : codeWithConsoleLines
 
-    // 6. logging de expresiones (rellena el lineMap del módulo)
+    // 7. logging de expresiones (rellena el lineMap del módulo)
     const modifiedCode = injectExpressionLogging(codeWithTimings, { enabled: autoLogExpressions })
 
     const lineMapObj: Record<number, number> = {}

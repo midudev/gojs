@@ -4,6 +4,7 @@ import {
   collectBareSpecifiers,
   collectNodeBuiltinImports,
   injectExpressionLogging,
+  instrumentConsoleLineNumbers,
   isNodeBuiltinSpecifier,
   lineMap,
   resolveModuleSpecifier,
@@ -108,6 +109,29 @@ describe('console callbacks', () => {
     const code = "console.error('boom')"
 
     expect(wrapConsoleCallbacks(code)).toBe(code)
+  })
+})
+
+describe('console line instrumentation', () => {
+  it('embeds explicit source lines without adding new lines', () => {
+    const code = "console.log('hello')\nconsole.info('ready')"
+    const transformed = instrumentConsoleLineNumbers(code)
+
+    expect(transformed).toContain(`console.__atLine__("log", 1)('hello')`)
+    expect(transformed).toContain(`console.__atLine__("info", 2)('ready')`)
+    expect(transformed.split('\n')).toHaveLength(code.split('\n').length)
+  })
+
+  it('preserves the callback source line after wrapping it', () => {
+    const code = "fetch('/api')\n  .catch(console.error)"
+    const transformed = instrumentConsoleLineNumbers(wrapConsoleCallbacks(code))
+
+    expect(transformed.split('\n')[1]).toContain(`console.__atLine__("error", 2)(...__console_args__)`)
+  })
+
+  it('does not rewrite assignments to console methods', () => {
+    const code = 'console.log = customLogger'
+    expect(instrumentConsoleLineNumbers(code)).toBe(code)
   })
 })
 

@@ -48,9 +48,10 @@ let timeMarks: Array<{ line: number; t: number }> = []
 
 // Mapa de líneas actual (se actualiza con cada ejecución)
 let currentLineMap: Record<number, number> = {}
+let explicitConsoleLine: number | null = null
 
 // Crear console personalizado que envía mensajes al hilo principal
-const customConsole = {
+const customConsole: Record<string, (...args: any[]) => any> = {
   log: (...args: any[]) => {
     const stack = new Error().stack || ''
     const lineNumber = extractLineNumber(stack)
@@ -99,7 +100,7 @@ const customConsole = {
     if (startTime === undefined) {
       const message: LogMessage = {
         type: 'warn',
-        lineNumber: null,
+        lineNumber: explicitConsoleLine,
         data: `Timer '${label}' does not exist`,
       }
       self.postMessage(message)
@@ -162,6 +163,19 @@ const customConsole = {
   },
 }
 
+customConsole.__atLine__ = (method: string, lineNumber: number) => (...args: any[]) => {
+  const handler = customConsole[method]
+  if (typeof handler !== 'function') return undefined
+
+  const previousLine = explicitConsoleLine
+  explicitConsoleLine = lineNumber
+  try {
+    return handler(...args)
+  } finally {
+    explicitConsoleLine = previousLine
+  }
+}
+
 // El wrapper de AsyncFunction añade un número fijo de líneas antes del cuerpo del
 // usuario, y ese número varía según el motor (V8 añade 2, otros pueden diferir).
 // Lo calibramos en tiempo de ejecución con una sonda cuya llamada está en la línea 1.
@@ -187,6 +201,8 @@ const WRAPPER_OFFSET = detectWrapperOffset()
 
 // Función para extraer número de línea del stack trace (mapeado a la línea original)
 function extractLineNumber(stack: string): number | null {
+  if (explicitConsoleLine != null) return explicitConsoleLine
+
   const rawLineNum = extractGeneratedLine(stack, USER_CODE_SOURCE_URL)
   if (rawLineNum == null) return null
 
