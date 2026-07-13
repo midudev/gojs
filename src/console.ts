@@ -257,6 +257,62 @@ export function wrapConsoleCallbacks(code: string): string {
 }
 
 /**
+ * Sustituye el acceso al método de console por un wrapper que recibe la línea
+ * original de forma explícita. Evita depender de Error.stack, cuyo formato en
+ * JavaScriptCore/WKWebView puede omitir el frame del código de usuario.
+ */
+export function instrumentConsoleLineNumbers(code: string): string {
+  let ast: any
+  try {
+    ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module', locations: true })
+  } catch {
+    return code
+  }
+
+  const replacements: Array<{ start: number; end: number; method: string; line: number }> = []
+
+  const walk = (node: any, parent: any = null) => {
+    if (!node || typeof node.type !== 'string') return
+
+    if (
+      node.type === 'MemberExpression' &&
+      !node.computed &&
+      node.object?.type === 'Identifier' &&
+      node.object.name === 'console' &&
+      node.property?.type === 'Identifier' &&
+      CONSOLE_CALLBACK_METHODS.has(node.property.name) &&
+      !(parent?.type === 'AssignmentExpression' && parent.left === node) &&
+      !(parent?.type === 'UpdateExpression' && parent.argument === node) &&
+      !(parent?.type === 'UnaryExpression' && parent.operator === 'delete')
+    ) {
+      replacements.push({
+        start: node.start,
+        end: node.end,
+        method: node.property.name,
+        line: node.loc.start.line,
+      })
+    }
+
+    for (const key of Object.keys(node)) {
+      if (key === 'start' || key === 'end' || key === 'loc') continue
+      const child = node[key]
+      if (Array.isArray(child)) child.forEach((item) => walk(item, node))
+      else if (child && typeof child.type === 'string') walk(child, node)
+    }
+  }
+
+  walk(ast)
+
+  let result = code
+  for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
+    const wrapper = `console.__atLine__(${JSON.stringify(replacement.method)}, ${replacement.line})`
+    result = result.slice(0, replacement.start) + wrapper + result.slice(replacement.end)
+  }
+
+  return result
+}
+
+/**
  * Construye un import map (formato WICG) que mapea cada paquete npm importado a su
  * URL en el CDN ESM, incluyendo la entrada con barra final para resolver subrutas.
  * Este mapa alimenta al LSP de modern-monaco para dar IntelliSense y carga de tipos.
