@@ -97,6 +97,48 @@ export async function generateLlama(
   }
 }
 
+export interface LlamaCompletionOptions {
+  maxTokens: number
+  temperature: number
+  stop: string[]
+  seed: number
+  signal?: AbortSignal
+}
+
+export async function completeLlama(
+  inputPrefix: string,
+  inputSuffix: string,
+  options: LlamaCompletionOptions,
+): Promise<string> {
+  const requestId = crypto.randomUUID()
+  const cancel = () => {
+    void invoke<boolean>('llama_cancel', { requestId }).catch(() => false)
+  }
+
+  if (options.signal?.aborted) {
+    throw new DOMException('Inline completion cancelled', 'AbortError')
+  }
+  options.signal?.addEventListener('abort', cancel, { once: true })
+
+  try {
+    const completion = await invoke<string>('llama_complete', {
+      requestId,
+      inputPrefix,
+      inputSuffix,
+      maxTokens: options.maxTokens,
+      temperature: options.temperature,
+      stop: options.stop,
+      seed: options.seed,
+    })
+    if (options.signal?.aborted) {
+      throw new DOMException('Inline completion cancelled', 'AbortError')
+    }
+    return completion
+  } finally {
+    options.signal?.removeEventListener('abort', cancel)
+  }
+}
+
 /** Stop the running server and cancel any in-flight generation. */
 export async function stopLlama(): Promise<boolean> {
   if (!isTauri()) return false

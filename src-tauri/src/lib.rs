@@ -174,6 +174,8 @@ pub fn run() {
             llama_runtime::llama_info,
             llama_runtime::llama_prepare,
             llama_runtime::llama_generate,
+            llama_runtime::llama_complete,
+            llama_runtime::llama_cancel,
             llama_runtime::llama_stop,
             llama_runtime::llama_uninstall,
         ])

@@ -114,6 +114,7 @@ pub struct LlamaState(pub Arc<LlamaInner>);
 pub struct LlamaInner {
     server: Mutex<Option<ServerProcess>>,
     generation: AtomicU64,
+    active_request_id: Mutex<Option<String>>,
 }
 
 struct ServerProcess {
@@ -127,6 +128,7 @@ impl Default for LlamaState {
         LlamaState(Arc::new(LlamaInner {
             server: Mutex::new(None),
             generation: AtomicU64::new(0),
+            active_request_id: Mutex::new(None),
         }))
     }
 }
@@ -596,6 +598,63 @@ fn start_server(
 
 // --- commands --------------------------------------------------------------
 
+fn claim_generation(inner: &LlamaInner, request_id: &str) -> Result<u64, String> {
+    let generation = inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut active = inner
+        .active_request_id
+        .lock()
+        .map_err(|_| "llama request state poisoned")?;
+    *active = Some(request_id.to_string());
+    Ok(generation)
+}
+
+fn clear_generation(inner: &LlamaInner, request_id: &str) {
+    if let Ok(mut active) = inner.active_request_id.lock() {
+        if active.as_deref() == Some(request_id) {
+            *active = None;
+        }
+    }
+}
+
+fn streamed_text(value: &Value) -> &str {
+    value
+        .get("content")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            value
+                .get("choices")
+                .and_then(|choices| choices.get(0))
+                .and_then(|choice| {
+                    choice
+                        .get("delta")
+                        .and_then(|delta| delta.get("content"))
+                        .or_else(|| choice.get("text"))
+                })
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("")
+}
+
+fn infill_request_body(
+    input_prefix: String,
+    input_suffix: String,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    stop: Option<Vec<String>>,
+    seed: Option<i64>,
+) -> Value {
+    json!({
+        "input_prefix": input_prefix,
+        "input_suffix": input_suffix,
+        "n_predict": max_tokens.unwrap_or(96),
+        "temperature": temperature.unwrap_or(0.0),
+        "stop": stop.unwrap_or_default(),
+        "seed": seed.unwrap_or(0),
+        "cache_prompt": true,
+        "stream": true,
+    })
+}
+
 /// Report which models are installed and whether a server is running. Cheap:
 /// only touches the filesystem, never the network.
 #[tauri::command]
@@ -718,75 +777,164 @@ pub async fn llama_generate(
     };
 
     // Claim a generation so a later stop/generate can abort this stream.
-    let my_gen = inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let my_gen = claim_generation(&inner, &request_id)?;
     let app_task = app.clone();
 
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let client = http_client()?;
-        let body = json!({
-            "messages": messages,
-            "temperature": temperature.unwrap_or(0.3),
-            "max_tokens": max_tokens.unwrap_or(2048),
-            "stream": true,
-        });
+        let result = (|| -> Result<String, String> {
+            let client = http_client()?;
+            let body = json!({
+                "messages": messages,
+                "temperature": temperature.unwrap_or(0.3),
+                "max_tokens": max_tokens.unwrap_or(2048),
+                "stream": true,
+            });
 
-        let response = client
-            .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
-            .json(&body)
-            .send()
-            .map_err(|e| format!("cannot reach local model server: {e}"))?
-            .error_for_status()
-            .map_err(|e| format!("model server error: {e}"))?;
+            let response = client
+                .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+                .json(&body)
+                .send()
+                .map_err(|e| format!("cannot reach local model server: {e}"))?
+                .error_for_status()
+                .map_err(|e| format!("model server error: {e}"))?;
 
-        let mut full = String::new();
-        let reader = BufReader::new(response);
-        for line in reader.lines() {
-            // A newer request (or a stop) superseded us: abort quietly.
-            if generation_cancelled(inner.generation.load(Ordering::SeqCst), my_gen) {
-                break;
+            let mut full = String::new();
+            let reader = BufReader::new(response);
+            for line in reader.lines() {
+                if generation_cancelled(inner.generation.load(Ordering::SeqCst), my_gen) {
+                    break;
+                }
+                let Ok(line) = line else { break };
+                let line = line.trim();
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data == "[DONE]" {
+                    break;
+                }
+                let Ok(value) = serde_json::from_str::<Value>(data) else {
+                    continue;
+                };
+                let token = streamed_text(&value);
+                if token.is_empty() {
+                    continue;
+                }
+                full.push_str(token);
+                let _ = app_task.emit(
+                    "llama://token",
+                    TokenChunk {
+                        id: request_id.clone(),
+                        token: token.to_string(),
+                    },
+                );
             }
-            let Ok(line) = line else { break };
-            let line = line.trim();
-            let Some(data) = line.strip_prefix("data:") else {
-                continue;
-            };
-            let data = data.trim();
-            if data == "[DONE]" {
-                break;
-            }
-            let Ok(value) = serde_json::from_str::<Value>(data) else {
-                continue;
-            };
-            let token = value
-                .get("choices")
-                .and_then(|c| c.get(0))
-                .and_then(|c| c.get("delta"))
-                .and_then(|d| d.get("content"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if token.is_empty() {
-                continue;
-            }
-            full.push_str(token);
-            let _ = app_task.emit(
-                "llama://token",
-                TokenChunk {
-                    id: request_id.clone(),
-                    token: token.to_string(),
-                },
-            );
-        }
-
-        Ok(full)
+            Ok(full)
+        })();
+        clear_generation(&inner, &request_id);
+        result
     })
     .await
     .map_err(|e| format!("generate task failed: {e}"))?
+}
+
+/// Fill code between a prefix and suffix through llama.cpp's dedicated infill
+/// endpoint. Unlike chat completions this preserves the model's native FIM
+/// template and never mutates the assistant conversation.
+#[tauri::command]
+pub async fn llama_complete(
+    state: State<'_, LlamaState>,
+    request_id: String,
+    input_prefix: String,
+    input_suffix: String,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    stop: Option<Vec<String>>,
+    seed: Option<i64>,
+) -> Result<String, String> {
+    let inner = state.0.clone();
+    let port = {
+        let guard = inner.server.lock().map_err(|_| "llama state poisoned")?;
+        guard
+            .as_ref()
+            .map(|server| server.port)
+            .ok_or("the local model server is not running")?
+    };
+    let my_gen = claim_generation(&inner, &request_id)?;
+
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let result = (|| -> Result<String, String> {
+            let client = http_client()?;
+            let body = infill_request_body(
+                input_prefix,
+                input_suffix,
+                max_tokens,
+                temperature,
+                stop,
+                seed,
+            );
+            let response = client
+                .post(format!("http://127.0.0.1:{port}/infill"))
+                .json(&body)
+                .send()
+                .map_err(|e| format!("cannot reach local model server: {e}"))?
+                .error_for_status()
+                .map_err(|e| format!("model server infill error: {e}"))?;
+
+            let mut full = String::new();
+            for line in BufReader::new(response).lines() {
+                if generation_cancelled(inner.generation.load(Ordering::SeqCst), my_gen) {
+                    break;
+                }
+                let Ok(line) = line else { break };
+                let Some(data) = line.trim().strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data == "[DONE]" {
+                    break;
+                }
+                let Ok(value) = serde_json::from_str::<Value>(data) else {
+                    continue;
+                };
+                full.push_str(streamed_text(&value));
+            }
+            Ok(full)
+        })();
+        clear_generation(&inner, &request_id);
+        result
+    })
+    .await
+    .map_err(|e| format!("completion task failed: {e}"))?
+}
+
+/// Cancel one specific inference request without stopping the model server. A
+/// stale inline-completion cancellation can therefore never kill a newer chat.
+#[tauri::command]
+pub fn llama_cancel(
+    state: State<'_, LlamaState>,
+    request_id: String,
+) -> Result<bool, String> {
+    let active = state
+        .0
+        .active_request_id
+        .lock()
+        .map_err(|_| "llama request state poisoned")?;
+    let should_cancel = request_matches(active.as_deref(), &request_id);
+    drop(active);
+    if should_cancel {
+        state.0.generation.fetch_add(1, Ordering::SeqCst);
+    }
+    Ok(should_cancel)
 }
 
 /// Stop the running server (if any) and cancel any in-flight generation.
 #[tauri::command]
 pub fn llama_stop(state: State<'_, LlamaState>) -> Result<bool, String> {
     state.0.generation.fetch_add(1, Ordering::SeqCst);
+    if let Ok(mut active) = state.0.active_request_id.lock() {
+        *active = None;
+    }
     let mut guard = state.0.server.lock().map_err(|_| "llama state poisoned")?;
     let was_running = guard.is_some();
     *guard = None; // Drop kills the child.
@@ -822,10 +970,15 @@ fn generation_cancelled(current: u64, claimed: u64) -> bool {
     current != claimed
 }
 
+fn request_matches(active_request_id: Option<&str>, requested_id: &str) -> bool {
+    active_request_id == Some(requested_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        asset_suffix, find_model, generation_cancelled, resolve_model_id, DEFAULT_MODEL_ID, MODELS,
+        asset_suffix, find_model, generation_cancelled, infill_request_body, request_matches,
+        resolve_model_id, streamed_text, DEFAULT_MODEL_ID, MODELS,
     };
 
     #[test]
@@ -860,5 +1013,40 @@ mod tests {
         assert!(!generation_cancelled(7, 7));
         assert!(generation_cancelled(8, 7));
         assert!(generation_cancelled(6, 7));
+    }
+
+    #[test]
+    fn only_cancels_the_matching_request() {
+        assert!(request_matches(Some("inline-2"), "inline-2"));
+        assert!(!request_matches(Some("chat-3"), "inline-2"));
+        assert!(!request_matches(None, "inline-2"));
+    }
+
+    #[test]
+    fn builds_deterministic_infill_requests() {
+        let body = infill_request_body(
+            "const value = ".to_string(),
+            "\nconsole.log(value)".to_string(),
+            Some(64),
+            Some(0.0),
+            Some(vec!["<|fim_middle|>".to_string()]),
+            Some(42),
+        );
+        assert_eq!(body["n_predict"], 64);
+        assert_eq!(body["seed"], 42);
+        assert_eq!(body["cache_prompt"], true);
+        assert_eq!(body["input_suffix"], "\nconsole.log(value)");
+        assert_eq!(body["stop"][0], "<|fim_middle|>");
+    }
+
+    #[test]
+    fn reads_chat_and_infill_stream_chunks() {
+        assert_eq!(streamed_text(&serde_json::json!({ "content": "value" })), "value");
+        assert_eq!(
+            streamed_text(&serde_json::json!({
+                "choices": [{ "delta": { "content": "next" } }]
+            })),
+            "next"
+        );
     }
 }
