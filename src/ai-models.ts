@@ -6,7 +6,8 @@ export const CHROME_PROMPT_API_MODEL_ID = 'chrome-prompt-api'
 // Selección "Auto": dejamos que la app decida el mejor modelo disponible.
 export const AUTO_MODEL_ID = 'auto'
 
-const CHAT_MODEL_ID_PATTERN = /^(Qwen)(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?B)-(.+)-MLC$/
+const CHAT_MODEL_ID_PATTERN =
+  /^(Qwen)(\d+(?:\.\d+)?)(?:-(Coder))?-(\d+(?:\.\d+)?B)-(?:Instruct-)?(.+)-MLC$/
 
 type ParsedChatModelId = {
   familyName: string
@@ -68,6 +69,10 @@ export function isChromePromptApiModelId(modelId: string | null | undefined): bo
   return modelId === CHROME_PROMPT_API_MODEL_ID
 }
 
+export function isFimCapableModelId(modelId: string | null | undefined): boolean {
+  return Boolean(modelId?.startsWith('Qwen2.5-Coder-'))
+}
+
 export function isValidChatModelId(modelId: string): boolean {
   return isChromePromptApiModelId(modelId) || AVAILABLE_CHAT_MODELS.some((model) => model.model_id === modelId)
 }
@@ -81,10 +86,10 @@ function parseChatModelId(modelId: string): ParsedChatModelId | null {
 
   if (!match) return null
 
-  const [, familyName, version, modelSize, quantization] = match
+  const [, familyName, version, specialization, modelSize, quantization] = match
 
   return {
-    familyName: `${familyName} ${version}`,
+    familyName: `${familyName} ${version}${specialization ? ` ${specialization}` : ''}`,
     modelSize,
     quantization,
   }

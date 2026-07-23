@@ -1,5 +1,5 @@
 // Genera `src/webllm-models.generated.ts` con el catálogo mínimo de modelos de
-// chat que la app ofrece (los Qwen3.5 tipo LLM de @mlc-ai/web-llm).
+// chat/completado que la app ofrece (Qwen3.5 y Qwen2.5 Coder).
 //
 // Motivo: `@mlc-ai/web-llm` solo expone un único entry (`lib/index.js`) que
 // mezcla los metadatos (`prebuiltAppConfig`) con TODO el runtime del motor
@@ -22,7 +22,7 @@ const version = JSON.parse(readFileSync(join(PKG_DIR, 'package.json'), 'utf8')).
 const { prebuiltAppConfig, ModelType } = await import('@mlc-ai/web-llm')
 
 // Mismos prefijos que usa src/ai-models.ts para elegir la familia de chat.
-const MODERN_CHAT_MODEL_PREFIXES = ['Qwen3.5-']
+const MODERN_CHAT_MODEL_PREFIXES = ['Qwen3.5-', 'Qwen2.5-Coder-']
 
 const candidates = prebuiltAppConfig.model_list.filter(
   (model) =>
