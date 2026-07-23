@@ -163,9 +163,7 @@ body {
 
 /* Header */
 .header {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-text-primary) 3%, transparent), transparent),
-    color-mix(in srgb, var(--color-bg-secondary) 88%, var(--editor-background, var(--color-bg-primary)));
+  background: color-mix(in srgb, var(--color-bg-secondary) 88%, var(--editor-background, var(--color-bg-primary)));
   border-bottom: 1px solid var(--surface-divider-color);
   padding: 0 12px;
   display: flex;
@@ -4380,9 +4378,7 @@ resize-panels[data-orientation='vertical'] .chatbot-queue-list {
   padding: 0 12px;
   align-items: center;
   gap: 12px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-text-primary) 3%, transparent), transparent),
-    color-mix(in srgb, var(--color-bg-secondary) 88%, var(--editor-background, var(--color-bg-primary)));
+  background: color-mix(in srgb, var(--color-bg-secondary) 88%, var(--editor-background, var(--color-bg-primary)));
 }
 
 .editor-side-panel .modal-header > div:first-child {
