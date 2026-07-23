@@ -45,6 +45,7 @@ import {
 import { initHeaderPopovers } from './popovers'
 import {
   initTabs,
+  createActiveTabModel,
   getActiveTabId,
   getActiveTabTitle,
   getOpenTabSnapshots,
@@ -1527,14 +1528,11 @@ async function initEditor() {
   // Crear instancia del editor
   applyEditorLineHeightVar(currentSettings.fontSize)
 
-  // Usar un modelo con URI `.ts` para que el LSP de TypeScript lo type-chequee y
-  // cargue tipos de los imports. El modelo por defecto de `create({ value })` usa una
-  // URI sin extensión que el LSP no reconoce (los modelos de las pestañas ya son `.ts`).
-  const initialModel = monaco.editor.createModel(
-    isShowcaseEmbed ? SHOWCASE_INITIAL_CODE : isAgentDemoEmbed ? AGENT_DEMO_INITIAL_CODE : INITIAL_CODE,
-    'typescript',
-    monaco.Uri.parse('inmemory://models/__initial.ts'),
-  )
+  // Restaurar la pestaña activa ANTES de montar el editor. Antes se creaba un
+  // modelo temporal con INITIAL_CODE y luego initTabs lo sustituía por el de
+  // localStorage, provocando un flash del contenido por defecto.
+  // createActiveTabModel ya usa URI `.ts` (LSP + tipos de imports).
+  const initialModel = createActiveTabModel(monaco)
 
   editor = monaco.editor.create(editorElement, {
     model: initialModel,
@@ -1616,18 +1614,13 @@ async function initEditor() {
   // Aplicar el tema inicial con la misma ruta que los cambios en settings.
   await changeTheme(currentSettings.theme)
 
-  // Inicializar sistema de pestañas (tabs) y re-ejecutar al activar
+  // Inicializar sistema de pestañas (tabs) y re-ejecutar al activar.
+  // El modelo activo ya está en el editor; initTabs reutiliza el estado
+  // restaurado por createActiveTabModel (sin segundo swap de contenido).
   initTabs(editor, monaco, () => {
     // Re-ejecutar el código de la pestaña activa para refrescar la salida
     runCode()
   })
-
-  // initTabs asigna el modelo de la pestaña activa al editor, dejando el modelo
-  // inicial huérfano. Lo liberamos para no retener un modelo (+ su trabajo de LSP)
-  // que ya no está en uso.
-  if (editor.getModel?.() !== initialModel) {
-    initialModel.dispose()
-  }
 
   // Inicializar el panel de historial de versiones
   initHistoryPanel()

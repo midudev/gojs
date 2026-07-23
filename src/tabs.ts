@@ -397,7 +397,12 @@ function updateActiveTabTitle(tab: Tab) {
   }
 }
 
+let tabsRestored = false
+
 function restoreTabs() {
+  if (tabsRestored) return
+  tabsRestored = true
+
   const loaded = loadState()
   if (loaded && Array.isArray(loaded.tabs) && loaded.tabs.length > 0) {
     state.tabs = loaded.tabs.map((t) => ({ ...t, model: undefined }))
@@ -414,11 +419,29 @@ function restoreTabs() {
   if (active) createModelForTab(active)
 }
 
+/**
+ * Restaura pestañas desde localStorage (o el código por defecto) y devuelve el
+ * modelo de la pestaña activa. Debe usarse al crear el editor para que el
+ * primer frame ya muestre el contenido guardado y no un flash de INITIAL_CODE.
+ */
+export function createActiveTabModel(monacoInstance: MonacoLike) {
+  monaco = monacoInstance
+  restoreTabs()
+  const active = state.tabs.find((t) => t.id === state.activeId)
+  if (!active) {
+    throw new Error('No active tab available while bootstrapping the editor')
+  }
+  if (!active.model) createModelForTab(active)
+  return active.model
+}
+
 export function initTabs(editorInstance: EditorLike, monacoInstance: MonacoLike, onActivated?: () => void) {
   editor = editorInstance
   monaco = monacoInstance
   onTabActivated = onActivated ?? null
 
+  // Si createActiveTabModel ya corrió, restoreTabs es un no-op y reutilizamos
+  // el mismo modelo que ya tiene el editor (sin flash de contenido).
   restoreTabs()
   render()
   setActiveModel()
