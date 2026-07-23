@@ -4,6 +4,7 @@ import {
   CHROME_PROMPT_API_MODEL_ID,
   DEFAULT_CHATBOT_MODEL_ID,
   isChromePromptApiModelId,
+  isFimCapableModelId,
   isValidChatModelId,
 } from './ai-models'
 import {
@@ -15,6 +16,7 @@ import {
 import { isTauri } from './native-runtime'
 import {
   generateLlama,
+  completeLlama,
   getLlamaInfo,
   onLlamaProgress,
   prepareLlama,
@@ -50,6 +52,27 @@ export interface ChatbotState {
    * the UI falls back to a generic "Downloading model… X%" message.
    */
   loadStatusMessage?: string | null
+}
+
+export interface GenerationOptions {
+  temperature?: number
+  maxTokens?: number
+}
+
+export interface InlineCompletionRequest {
+  prefix: string
+  suffix: string
+  maxTokens: number
+  temperature?: number
+  stop: string[]
+  seed: number
+  candidateCount?: number
+  signal?: AbortSignal
+}
+
+export interface InlineCompletionCandidate {
+  text: string
+  finishReason: string | null
 }
 
 const MEGABYTE_IN_BYTES = 1024 * 1024
@@ -228,6 +251,7 @@ class Chatbot {
   // progress UI, agent loop — stays identical.
   private readonly native = isTauri()
   private nativeProgressUnlisten: (() => void) | null = null
+  private inlineController: AbortController | null = null
 
   // Establecer listener para cambios de estado
   public setStateChangeListener(callback: (state: ChatbotState) => void) {
@@ -669,15 +693,138 @@ class Chatbot {
   private async generateNative(
     messages: ChatMessage[],
     onChunk?: (chunk: string) => void,
+    options?: GenerationOptions,
   ): Promise<string> {
     if (!this.state.isReady) {
       throw new Error('The chatbot is not ready. Please wait for it to load.')
     }
-    return generateLlama(messages, onChunk, { temperature: 0.3, maxTokens: 2048 })
+    return generateLlama(messages, onChunk, {
+      temperature: options?.temperature ?? 0.3,
+      maxTokens: options?.maxTokens ?? 2048,
+    })
+  }
+
+  public async cancelInlineCompletion(): Promise<void> {
+    const controller = this.inlineController
+    if (!controller) return
+
+    this.inlineController = null
+    controller.abort()
+    if (!this.native && this.engine) {
+      await Promise.resolve(this.engine.interruptGenerate()).catch(() => {})
+    }
+  }
+
+  public async completeInline(request: InlineCompletionRequest): Promise<InlineCompletionCandidate[]> {
+    if (!this.state.isReady) {
+      throw new Error('The agent model must be ready before inline completion.')
+    }
+
+    await this.cancelInlineCompletion()
+    const controller = new AbortController()
+    this.inlineController = controller
+    const relayAbort = () => {
+      controller.abort()
+      if (!this.native && this.engine) {
+        void Promise.resolve(this.engine.interruptGenerate()).catch(() => {})
+      }
+    }
+    request.signal?.addEventListener('abort', relayAbort, { once: true })
+
+    try {
+      if (this.native) {
+        const text = await completeLlama(request.prefix, request.suffix, {
+          maxTokens: request.maxTokens,
+          temperature: request.temperature ?? 0,
+          stop: request.stop,
+          seed: request.seed,
+          signal: controller.signal,
+        })
+        return [{ text, finishReason: controller.signal.aborted ? 'cancelled' : 'stop' }]
+      }
+
+      const readablePrefix = request.prefix
+        .replace(/<\|repo_name\|>/g, 'Repository: ')
+        .replace(/<\|file_sep\|>/g, '\n\nFile: ')
+        .replace(/\u200b/g, '')
+      const instructPrompt = `Code before cursor:\n<prefix>\n${readablePrefix}\n</prefix>\n\nCode after cursor:\n<suffix>\n${request.suffix.replace(/\u200b/g, '')}\n</suffix>`
+
+      if (isChromePromptApiModelId(this.state.currentModelId)) {
+        const session = await createChromePromptApiSession(
+          'You are an inline code completion engine. Return only the exact code to insert at the cursor, without Markdown or explanations.',
+        )
+        const destroySession = () => session.destroy?.()
+        controller.signal.addEventListener('abort', destroySession, { once: true })
+        try {
+          let text = ''
+          for await (const chunk of streamChromePromptApiResponse(session, instructPrompt)) {
+            if (controller.signal.aborted) {
+              throw new DOMException('Inline completion cancelled', 'AbortError')
+            }
+            text += chunk
+          }
+          return [{ text, finishReason: 'stop' }]
+        } finally {
+          controller.signal.removeEventListener('abort', destroySession)
+          session.destroy?.()
+        }
+      }
+
+      if (!this.engine) throw new Error('The agent model engine is not ready.')
+
+      if (!isFimCapableModelId(this.state.currentModelId)) {
+        const response = await this.engine.chat.completions.create({
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are an inline code completion engine. Return only the exact code to insert at the cursor, without Markdown or explanations.',
+            },
+            {
+              role: 'user',
+              content: instructPrompt,
+            },
+          ],
+          temperature: request.temperature ?? 0,
+          max_tokens: request.maxTokens,
+          n: request.candidateCount ?? 1,
+          stream: false,
+        })
+        if (controller.signal.aborted) {
+          throw new DOMException('Inline completion cancelled', 'AbortError')
+        }
+        return response.choices.map((choice) => ({
+          text: choice.message.content ?? '',
+          finishReason: choice.finish_reason,
+        }))
+      }
+
+      const response = await this.engine.completions.create({
+        prompt: `<|fim_prefix|>${request.prefix}<|fim_suffix|>${request.suffix}<|fim_middle|>`,
+        temperature: request.temperature ?? 0,
+        max_tokens: request.maxTokens,
+        repetition_penalty: 1,
+        seed: request.seed,
+        n: request.candidateCount ?? 1,
+        stop: request.stop.slice(0, 4),
+        stream: false,
+      })
+      if (controller.signal.aborted) {
+        throw new DOMException('Inline completion cancelled', 'AbortError')
+      }
+      return response.choices.map((choice) => ({
+        text: choice.text,
+        finishReason: choice.finish_reason,
+      }))
+    } finally {
+      request.signal?.removeEventListener('abort', relayAbort)
+      if (this.inlineController === controller) this.inlineController = null
+    }
   }
 
   // Enviar un mensaje y obtener respuesta
   public async sendMessage(userMessage: string, onChunk?: (chunk: string) => void): Promise<string> {
+    await this.cancelInlineCompletion()
     if (isChromePromptApiModelId(this.state.currentModelId)) {
       return this.sendPromptApiMessage(userMessage, onChunk)
     }
@@ -766,9 +913,14 @@ class Chatbot {
    * defecto. Es la primitiva de bajo nivel que usa el agente de código para poder
    * dar sus propias instrucciones y hacer varios turnos de razonamiento.
    */
-  public async generate(messages: ChatMessage[], onChunk?: (chunk: string) => void): Promise<string> {
+  public async generate(
+    messages: ChatMessage[],
+    onChunk?: (chunk: string) => void,
+    options?: GenerationOptions,
+  ): Promise<string> {
+    await this.cancelInlineCompletion()
     if (this.native) {
-      return this.generateNative(messages, onChunk)
+      return this.generateNative(messages, onChunk, options)
     }
 
     if (isChromePromptApiModelId(this.state.currentModelId)) {
@@ -784,8 +936,8 @@ class Chatbot {
     const chunks = await this.engine.chat.completions.create({
       messages,
       // Temperatura baja: queremos respuestas deterministas y acciones precisas.
-      temperature: 0.3,
-      max_tokens: 2048,
+      temperature: options?.temperature ?? 0.3,
+      max_tokens: options?.maxTokens ?? 2048,
       stream: true,
     })
 

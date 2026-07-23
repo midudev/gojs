@@ -794,6 +794,11 @@ return doubles</textarea>
       }'>
         <div class="editor-panel">
           <div id="editor"></div>
+          <div id="ai-autocomplete-status" class="ai-autocomplete-status" data-state="idle" role="status"
+            aria-live="polite" aria-atomic="true" hidden>
+            <span class="ai-autocomplete-status-icon" aria-hidden="true"></span>
+            <span class="ai-autocomplete-status-label"></span>
+          </div>
         </div>
 
         <div class="output-panel">
@@ -1188,6 +1193,14 @@ return doubles</textarea>
     </aside>
   </div>
 
+  <script type="importmap">
+    {
+      "imports": {
+        "modern-monaco/editor-core": "/modern-monaco/editor-core.mjs",
+        "modern-monaco/lsp": "/modern-monaco/lsp/index.mjs"
+      }
+    }
+  </script>
   <script type="module" src="/src/entry.ts"></script>
 </body>
 

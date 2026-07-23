@@ -1,0 +1,92 @@
+[
+  {
+    "id": "property-map",
+    "language": "typescript",
+    "prefix": "const names = users.",
+    "suffix": "\nconsole.log(names)",
+    "expected": "map((user) => user.name)"
+  },
+  {
+    "id": "array-filter",
+    "language": "javascript",
+    "prefix": "const active = users.filter((user) => ",
+    "suffix": ")\n",
+    "expected": "user.active"
+  },
+  {
+    "id": "async-fetch",
+    "language": "typescript",
+    "prefix": "async function loadUser(id: string) {\n  const response = await fetch(`/api/users/${id}`)\n  ",
+    "suffix": "\n}",
+    "expected": "return response.json()"
+  },
+  {
+    "id": "object-property",
+    "language": "typescript",
+    "prefix": "const config = {\n  retries: 3,\n  ",
+    "suffix": "\n}",
+    "expected": "timeout: 5_000,"
+  },
+  {
+    "id": "promise-all",
+    "language": "typescript",
+    "prefix": "const [user, posts] = await ",
+    "suffix": "\n",
+    "expected": "Promise.all([fetchUser(), fetchPosts()])"
+  },
+  {
+    "id": "generic-function",
+    "language": "typescript",
+    "prefix": "function first<T>(items: T[]): T | undefined {\n  ",
+    "suffix": "\n}",
+    "expected": "return items[0]"
+  },
+  {
+    "id": "error-guard",
+    "language": "javascript",
+    "prefix": "function divide(a, b) {\n  if (b === 0) ",
+    "suffix": "\n  return a / b\n}",
+    "expected": "throw new Error('Cannot divide by zero')"
+  },
+  {
+    "id": "reduce-total",
+    "language": "typescript",
+    "prefix": "const total = prices.reduce((sum, price) => ",
+    "suffix": ", 0)",
+    "expected": "sum + price"
+  },
+  {
+    "id": "interface-field",
+    "language": "typescript",
+    "prefix": "interface User {\n  id: string\n  ",
+    "suffix": "\n}",
+    "expected": "name: string"
+  },
+  {
+    "id": "optional-chain",
+    "language": "typescript",
+    "prefix": "const city = user.",
+    "suffix": " ?? 'Unknown'",
+    "expected": "address?.city"
+  },
+  {
+    "id": "multitab-import",
+    "language": "typescript",
+    "prefix": "import { formatPrice } from './money'\nconst label = ",
+    "suffix": "\n",
+    "expected": "formatPrice(product.price)",
+    "relatedFiles": [
+      {
+        "path": "money.ts",
+        "content": "export function formatPrice(value: number) { return `$${value.toFixed(2)}` }"
+      }
+    ]
+  },
+  {
+    "id": "event-listener",
+    "language": "javascript",
+    "prefix": "button.addEventListener('click', () => {\n  ",
+    "suffix": "\n})",
+    "expected": "dialog.showModal()"
+  }
+]

@@ -48,6 +48,20 @@ export function getActiveTabTitle(): string {
   return active ? getTabTitle(active) : 'untitled'
 }
 
+export function getOpenTabSnapshots(): Array<{
+  id: string
+  path: string
+  content: string
+  updatedAt: number
+}> {
+  return state.tabs.map((tab) => ({
+    id: tab.id,
+    path: getTabTitle(tab),
+    content: tab.model?.getValue?.() ?? tab.content,
+    updatedAt: tab.updatedAt,
+  }))
+}
+
 function loadState(): TabsState | null {
   try {
     const raw = localStorage.getItem(STORAGE_TABS)

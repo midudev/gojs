@@ -532,6 +532,76 @@ body {
   background-color: var(--editor-background, var(--color-bg-primary));
 }
 
+.ai-autocomplete-status {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 20px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--color-text-secondary) 14%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--editor-background, var(--color-bg-primary)) 90%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 8%);
+}
+
+.ai-autocomplete-status[hidden] {
+  display: none;
+}
+
+.ai-autocomplete-status-icon {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+}
+
+.ai-autocomplete-status[data-state='thinking'] .ai-autocomplete-status-icon {
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: autocomplete-status-pulse 900ms ease-in-out infinite;
+}
+
+.ai-autocomplete-status[data-state='suggested'] {
+  color: var(--color-success, #22a06b);
+}
+
+.ai-autocomplete-status[data-state='suggested'] .ai-autocomplete-status-icon::before {
+  content: '✓';
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 7px;
+}
+
+@keyframes autocomplete-status-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(0.75);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-autocomplete-status[data-state='thinking'] .ai-autocomplete-status-icon {
+    animation: none;
+  }
+}
+
 /* Highlight de línea en el editor */
 .line-highlight {
   background-color: var(--editor-line-hover-background) !important;

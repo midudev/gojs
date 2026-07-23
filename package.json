@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "types:node": "node scripts/gen-node-types.mjs",
     "types:webllm": "node scripts/gen-webllm-models.mjs",
+    "benchmark:autocomplete": "node scripts/score-autocomplete-benchmark.mjs",
     "node:fetch": "node scripts/fetch-node.mjs",
     "version:set": "node scripts/set-version.mjs",
     "version:check": "node scripts/set-version.mjs --check",
@@ -37,6 +38,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.3",
     "esbuild": "0.28.1",
+    "playwright": "^1.61.1",
     "typescript": "6.0.3",
     "vite": "8.1.3",
     "vitest": "4.1.10"

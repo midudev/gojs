@@ -1,4 +1,4 @@
-import { init } from 'modern-monaco'
+import { init, Workspace } from 'modern-monaco'
 import {
   AUTO_MODEL_ID,
   AVAILABLE_CHAT_MODELS,
@@ -10,6 +10,7 @@ import {
   getChromePromptApiModelLabel,
   isAutoModelId,
   isChromePromptApiModelId,
+  isFimCapableModelId,
   resolveAutoModelId,
 } from './ai-models'
 import {
@@ -46,6 +47,7 @@ import {
   initTabs,
   getActiveTabId,
   getActiveTabTitle,
+  getOpenTabSnapshots,
   flushTabsState,
   newTab,
   closeTab,
@@ -96,6 +98,8 @@ import {
 } from './native-runtime'
 import { injectNativeExpressionLogging, instrumentNodeCode, parseNativeLogLine } from './native-console'
 import { getLlamaInfo, type LlamaInfo, type LlamaModelInfo } from './llama-runtime'
+import { registerAiAutocomplete } from './ai-autocomplete'
+import { destroyAutocompleteValidator, rankAutocompleteCandidates } from './ai-autocomplete-validator'
 import { NODE_TYPES_FILES, NODE_TYPES_VERSION } from './node-types.generated'
 import type { Runtime } from './storage'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -140,6 +144,8 @@ let monaco: any = null
 let autoRunEnabled = true
 let debounceTimer: number | null = null
 let currentDecorations: any[] = [] // Para guardar las decoraciones activas
+let aiAutocompleteDisposable: { dispose(): void } | null = null
+let aiAutocompleteStatusTimer: number | null = null
 
 // Duraciones de la última ejecución: línea original -> milisegundos.
 // Se pintan en el gutter, justo antes del número de línea (ver getLineNumbersOption).
@@ -867,6 +873,30 @@ async function ensureModelLoadedForChoice(): Promise<boolean> {
   }
 }
 
+async function findDownloadedAutocompleteModel(): Promise<string | null> {
+  const preferredModelId = resolveModelChoice(userModelChoice)
+
+  const installed = await chatbot.isModelInstalled(preferredModelId).catch(() => false)
+  return installed ? preferredModelId : null
+}
+
+async function preloadAgentModelForAutocomplete(): Promise<void> {
+  const targetModelId = resolveModelChoice(userModelChoice)
+  const state = chatbot.getState()
+  if (
+    !currentSettings.aiEnabled ||
+    agentBusy ||
+    state.isInitializing ||
+    (state.isReady && state.currentModelId === targetModelId)
+  ) {
+    return
+  }
+
+  const availableModelId = await findDownloadedAutocompleteModel()
+  if (!availableModelId || agentBusy) return
+  await chatbot.loadModel(availableModelId)
+}
+
 // Construye y cablea el selector de modelo del composer (dropdown estilo Cursor).
 function setupComposerModelSelector() {
   const trigger = $('#chatbot-model-trigger') as HTMLButtonElement | null
@@ -1059,9 +1089,11 @@ function setupComposerModelSelector() {
 
     // Si el modelo resuelto ya está disponible (system) o instalado, cárgalo ya.
     void (async () => {
+      await chatbot.cancelInlineCompletion()
+      updateAiAutocompleteStatus('idle')
       const target = resolveModelChoice(id)
       const installed = await chatbot.isModelInstalled(target).catch(() => false)
-      if (isChromePromptApiModelId(target) || installed) {
+      if (installed) {
         await ensureModelLoadedForChoice()
       }
     })()
@@ -1333,26 +1365,105 @@ let loadedMonacoThemes: any[] = []
 // referencias (donde viven las declaraciones `declare module "node:os"`, etc.).
 // La lista se genera desde el paquete instalado con `pnpm types:node`.
 //
-// Servimos esos .d.ts desde el propio bundle (mismo origen) en vez de hacer ~90
-// peticiones cross-origin a esm.sh: Vite emite cada fichero como asset y nos da su
-// URL local, lo que además funciona offline y es cacheable. Si por lo que sea un
-// fichero no resuelve localmente, caemos a esm.sh para no perder autocompletado.
-const NODE_TYPES_ASSET_URLS = import.meta.glob('/node_modules/@types/node/**/*.d.ts', {
-  query: '?url',
+// Cargamos el texto fuente desde el propio bundle. `?url` no sirve en desarrollo:
+// Vite interpreta un .d.ts solicitado directamente como TypeScript y devuelve un
+// módulo vacío. `?raw` conserva las declaraciones tanto en web como en Tauri.
+const NODE_TYPES_LOADERS = import.meta.glob('/node_modules/@types/node/**/*.d.ts', {
+  query: '?raw',
   import: 'default',
-  eager: true,
-}) as Record<string, string>
+}) as Record<string, () => Promise<string>>
 
-const NODE_TYPES_URLS = NODE_TYPES_FILES.map((file) => {
-  const localUrl = NODE_TYPES_ASSET_URLS[`/node_modules/@types/node/${file}`]
-  return localUrl ?? `https://esm.sh/@types/node@${NODE_TYPES_VERSION}/${file}`
-})
+const NODE_TYPES_ROOT = '@types/node'
+const NODE_MODULE_TYPE_FILES = NODE_TYPES_FILES.filter(
+  (file) =>
+    file.endsWith('.d.ts') &&
+    file !== 'index.d.ts' &&
+    !file.startsWith('globals') &&
+    !file.startsWith('web-globals/'),
+)
+const NODE_MODULE_TYPE_FILE_SET = new Set(NODE_MODULE_TYPE_FILES)
+
+function getNodeDefaultImportDeclaration(file: string): string {
+  const moduleName = file.slice(0, -'.d.ts'.length)
+  return `declare module "node:${moduleName}" {
+  const defaultExport: typeof import("node:${moduleName}")
+  export default defaultExport
+}
+declare module "${moduleName}" {
+  export { default } from "node:${moduleName}"
+}`
+}
+
+async function createMonacoWorkspace(): Promise<Workspace> {
+  const workspace = new Workspace({ name: `gojs-node-types-${NODE_TYPES_VERSION}-v2` })
+  const directories = new Set<string>([NODE_TYPES_ROOT])
+
+  for (const file of NODE_TYPES_FILES) {
+    const separator = file.lastIndexOf('/')
+    if (separator !== -1) directories.add(`${NODE_TYPES_ROOT}/${file.slice(0, separator)}`)
+  }
+
+  for (const directory of directories) {
+    try {
+      await workspace.fs.createDirectory(directory)
+    } catch {
+      // El directorio ya existe en el workspace persistente.
+    }
+  }
+
+  await Promise.all(
+    NODE_TYPES_FILES.map(async (file) => {
+      const workspacePath = `${NODE_TYPES_ROOT}/${file}`
+
+      try {
+        const stat = await workspace.fs.stat(workspacePath)
+        if (stat.size > 0) return
+      } catch {
+        // La versión del workspace aún no contiene este fichero.
+      }
+
+      const loadLocalType = NODE_TYPES_LOADERS[`/node_modules/@types/node/${file}`]
+      let source: string
+
+      if (loadLocalType) {
+        source = await loadLocalType()
+      } else {
+        const response = await fetch(`https://esm.sh/@types/node@${NODE_TYPES_VERSION}/${file}`)
+        if (!response.ok) {
+          throw new Error(`Could not load Node.js types: ${file} (${response.status})`)
+        }
+        source = await response.text()
+      }
+
+      if (NODE_MODULE_TYPE_FILE_SET.has(file)) {
+        source += `\n${getNodeDefaultImportDeclaration(file)}\n`
+      }
+
+      await workspace.fs.writeFile(workspacePath, source)
+    }),
+  )
+
+  return workspace
+}
+
+async function registerNodeTypeModels(workspace: Workspace) {
+  await Promise.all(
+    NODE_TYPES_FILES.map(async (file) => {
+      const uri = monaco.Uri.parse(`file:///${NODE_TYPES_ROOT}/${file}`)
+      if (monaco.editor.getModel(uri)) return
+
+      const source = await workspace.fs.readTextFile(`${NODE_TYPES_ROOT}/${file}`)
+      monaco.editor.createModel(source, 'typescript', uri)
+    }),
+  )
+}
 
 // Construye las opciones de `init()` con el import map derivado de los paquetes dados.
-function buildMonacoInitOptions(specifiers: string[]) {
+function buildMonacoInitOptions(specifiers: string[], workspace: Workspace) {
   return {
     defaultTheme: currentSettings.theme,
     themes: loadedMonacoThemes,
+    workspace,
     lsp: {
       typescript: {
         importMap: {
@@ -1364,8 +1475,9 @@ function buildMonacoInitOptions(specifiers: string[]) {
           module: 99, // ESNext
           lib: ['ES2022', 'DOM', 'DOM.Iterable'],
           // Tipos de Node.js (autocomplete de `process`, `fs`, `node:*`, etc.).
-          // modern-monaco los descarga y añade al programa del LSP.
-          types: NODE_TYPES_URLS,
+          // Usamos rutas del workspace porque modern-monaco solo descarga URLs
+          // http(s), mientras que Tauri sirve los assets mediante su propio protocolo.
+          types: NODE_TYPES_FILES.map((file) => `${NODE_TYPES_ROOT}/${file}`),
           strict: true,
           // En un playground el `catch (error)` casual no debería marcar error: dejamos
           // la variable como `any` en vez de `unknown`.
@@ -1393,9 +1505,11 @@ async function initEditor() {
 
   // Sembrar el import map del LSP con los paquetes ya importados en las pestañas.
   const seedSpecifiers = collectBareSpecifiers(collectPersistedCode())
+  const workspace = await createMonacoWorkspace()
 
   // Inicializar Monaco con configuración manual
-  monaco = await init(buildMonacoInitOptions(seedSpecifiers))
+  monaco = await init(buildMonacoInitOptions(seedSpecifiers, workspace))
+  await registerNodeTypeModels(workspace)
 
   // modern-monaco 0.4 incluye `< >` como par coloreable en JS/TS. Eso hace que
   // cada `>` de `=>` y de una comparación se marque como cierre inesperado,
@@ -1461,6 +1575,10 @@ async function initEditor() {
     smoothScrolling: true,
     cursorBlinking: 'smooth',
     cursorSmoothCaretAnimation: 'on',
+    inlineSuggest: {
+      enabled: true,
+      mode: 'subwordSmart',
+    },
     padding: {
       top: 16,
       bottom: 16,
@@ -1493,6 +1611,7 @@ async function initEditor() {
 
   setupEditorEvents()
   setupSelectionContext()
+  setupAiAutocomplete()
 
   // Aplicar el tema inicial con la misma ruta que los cambios en settings.
   await changeTheme(currentSettings.theme)
@@ -2055,6 +2174,89 @@ function setupEditorEvents() {
   }
 }
 
+function updateAiAutocompleteStatus(status: 'idle' | 'thinking' | 'suggested') {
+  const statusElement = $('#ai-autocomplete-status') as HTMLElement | null
+  if (!statusElement) return
+
+  if (aiAutocompleteStatusTimer !== null) {
+    window.clearTimeout(aiAutocompleteStatusTimer)
+    aiAutocompleteStatusTimer = null
+  }
+
+  statusElement.dataset.state = status
+  statusElement.hidden = status === 'idle'
+  const label = statusElement.querySelector<HTMLElement>('.ai-autocomplete-status-label')
+  if (label) label.textContent = status === 'thinking' ? 'Completing' : status === 'suggested' ? 'Suggested' : ''
+
+  if (status === 'suggested') {
+    aiAutocompleteStatusTimer = window.setTimeout(() => {
+      aiAutocompleteStatusTimer = null
+      updateAiAutocompleteStatus('idle')
+    }, 1_800)
+  }
+}
+
+function setupAiAutocomplete() {
+  if (!editor || !monaco || isLandingEmbed || aiAutocompleteDisposable) return
+
+  aiAutocompleteDisposable = registerAiAutocomplete({
+    monaco,
+    editor,
+    canGenerate: () => {
+      const state = chatbot.getState()
+      return (
+        currentSettings.aiEnabled &&
+        !agentBusy &&
+        state.isReady &&
+        state.currentModelId === resolveModelChoice(userModelChoice)
+      )
+    },
+    getAdditionalContext: (model) => {
+      const activeTabId = getActiveTabId()
+      const severityLabel = (severity: number) => {
+        if (severity >= monaco.MarkerSeverity.Error) return 'error'
+        if (severity >= monaco.MarkerSeverity.Warning) return 'warning'
+        return 'info'
+      }
+      const diagnostics = monaco.editor
+        .getModelMarkers({ resource: model.uri })
+        .map((marker: any) => ({
+          line: marker.startLineNumber,
+          severity: severityLabel(marker.severity),
+          message: marker.message,
+        }))
+
+      return {
+        filePath: getActiveTabTitle(),
+        runtime: currentSettings.runtime,
+        relatedFiles: getOpenTabSnapshots()
+          .filter((tab) => tab.id !== activeTabId)
+          .map((tab) => ({
+            path: tab.path,
+            content: tab.content,
+            updatedAt: tab.updatedAt,
+          })),
+        diagnostics,
+      }
+    },
+    generate: (request) => chatbot.completeInline(request),
+    rankCandidates: rankAutocompleteCandidates,
+    getCacheNamespace: () => chatbot.getState().currentModelId ?? 'local-model',
+    onStatusChange: updateAiAutocompleteStatus,
+    getCandidateCount: () => {
+      const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4
+      const modelId = chatbot.getState().currentModelId
+      return deviceMemory >= 8 && isFimCapableModelId(modelId) && !isTauri() ? 2 : 1
+    },
+  })
+
+  // El editor puede montarse antes que el panel del agente. En escritorio eso
+  // dejaba el GGUF instalado pero sin arrancar, y el provider nunca llegaba a
+  // ejecutarse porque esperaba `isReady`. Precargamos el mismo modelo elegido
+  // por el agente, únicamente cuando ya está instalado.
+  void preloadAgentModelForAutocomplete()
+}
+
 // Formatear código del editor con Prettier
 async function formatEditorCode() {
   if (!editor) return
@@ -2127,6 +2329,9 @@ function teardownApp() {
   executorWorker = null
   destroyPrettierWorker()
   destroyCodePrepWorker()
+  destroyAutocompleteValidator()
+  aiAutocompleteDisposable?.dispose()
+  aiAutocompleteDisposable = null
   void chatbot.destroy()
 
   editor?.dispose?.()
@@ -4879,13 +5084,10 @@ async function initChatbot() {
   syncComposerActionState()
 
   if (!chatbotState.isReady && !chatbotState.isInitializing) {
-    // Precarga en segundo plano solo si no requiere descarga (modelo del sistema) o
-    // ya está instalado. Los modelos grandes se descargan al primer envío.
-    const target = resolveModelChoice(userModelChoice)
-    const targetInstalled = await chatbot.isModelInstalled(target).catch(() => false)
-    if (isChromePromptApiModelId(target) || targetInstalled) {
-      void ensureModelLoadedForChoice()
-    }
+    // El autocomplete comparte exactamente el modelo elegido por el agente.
+    // Solo lo precargamos si ya está disponible: nunca descarga ni sustituye
+    // silenciosamente el modelo seleccionado por otro especializado.
+    void preloadAgentModelForAutocomplete()
   }
 
   // Captura el composer. Si hay un turno activo, el mensaje espera en la cola;
@@ -4936,6 +5138,8 @@ async function initChatbot() {
   // Procesa exactamente un turno. Solo esta función añade el mensaje al historial.
   async function processAgentTurn(item: ChatQueueItem) {
     agentBusy = true
+    await chatbot.cancelInlineCompletion()
+    updateAiAutocompleteStatus('idle')
     syncComposerActionState()
 
     addChatMessage('user', item.message)
@@ -4961,8 +5165,10 @@ async function initChatbot() {
 
     // Si el modelo aún no está listo, lo cargamos mostrando el progreso en el estado
     // ("Preparing model…" / "Downloading model… X%") en vez de una pantalla de carga.
-    if (!chatbot.getState().isReady) {
-      showStatus(describeModelLoadStatus(chatbot.getState()))
+    const targetModelId = resolveModelChoice(userModelChoice)
+    const activeModel = chatbot.getState()
+    if (!activeModel.isReady || activeModel.currentModelId !== targetModelId) {
+      showStatus(activeModel.isReady ? 'Preparing selected model…' : describeModelLoadStatus(activeModel))
       modelLoadStatusUpdater = showStatus
       const ready = await ensureModelLoadedForChoice()
       modelLoadStatusUpdater = null
