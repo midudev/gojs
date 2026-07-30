@@ -1,2 +1,8 @@
 allowBuilds:
   esbuild: true
+
+minimumReleaseAgeExclude:
+  - postcss@8.5.25
+
+overrides:
+  '@rolldown/binding-wasm32-wasi@1.1.5>@napi-rs/wasm-runtime': 1.1.6
