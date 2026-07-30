@@ -911,10 +911,7 @@ pub async fn llama_complete(
 /// Cancel one specific inference request without stopping the model server. A
 /// stale inline-completion cancellation can therefore never kill a newer chat.
 #[tauri::command]
-pub fn llama_cancel(
-    state: State<'_, LlamaState>,
-    request_id: String,
-) -> Result<bool, String> {
+pub fn llama_cancel(state: State<'_, LlamaState>, request_id: String) -> Result<bool, String> {
     let active = state
         .0
         .active_request_id
@@ -1041,7 +1038,10 @@ mod tests {
 
     #[test]
     fn reads_chat_and_infill_stream_chunks() {
-        assert_eq!(streamed_text(&serde_json::json!({ "content": "value" })), "value");
+        assert_eq!(
+            streamed_text(&serde_json::json!({ "content": "value" })),
+            "value"
+        );
         assert_eq!(
             streamed_text(&serde_json::json!({
                 "choices": [{ "delta": { "content": "next" } }]
