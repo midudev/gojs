@@ -5,6 +5,16 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildSync } from 'esbuild'
+import ts from 'typescript'
+
+// El worker LSP de modern-monaco hace `import ts from "typescript"` y llama a
+// `createLanguageService`. TypeScript 7+ es nativo y ya no exporta esa API, así
+// que el widget de sugerencias se queda en "Loading..." para siempre.
+if (typeof ts.createLanguageService !== 'function') {
+  throw new Error(
+    `TypeScript ${ts.version} does not provide createLanguageService. Pin typescript to 6.x so Monaco autocomplete can load.`,
+  )
+}
 
 const MODERN_MONACO_DIST = dirname(fileURLToPath(import.meta.resolve('modern-monaco')))
 const MODERN_MONACO_FILES = [
