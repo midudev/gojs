@@ -43,6 +43,7 @@ import {
   isSerializedConsoleValue,
 } from './console-values'
 import { initHeaderPopovers } from './popovers'
+import { patchBracketColorizationInComments } from './bracket-tokens'
 import {
   initTabs,
   createActiveTabModel,
@@ -1510,6 +1511,10 @@ async function initEditor() {
 
   // Inicializar Monaco con configuración manual
   monaco = await init(buildMonacoInitOptions(seedSpecifiers, workspace))
+  // Antes de crear modelos: el tokenizer de modern-monaco se registra al
+  // activar JS/TS. Hay que envolver setTokensProvider aquí para que los
+  // brackets dentro de comentarios no se coloricen (issue #27).
+  patchBracketColorizationInComments(monaco)
   await registerNodeTypeModels(workspace)
 
   // modern-monaco 0.4 incluye `< >` como par coloreable en JS/TS. Eso hace que
