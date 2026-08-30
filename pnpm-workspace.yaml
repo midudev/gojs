@@ -5,7 +5,6 @@ minimumReleaseAgeExclude:
   - postcss@8.5.25
 
 overrides:
-  '@rolldown/binding-wasm32-wasi@1.1.5>@napi-rs/wasm-runtime': 1.1.6
   # modern-monaco's TS worker needs the JS language service (createLanguageService).
   # TypeScript 7+ is native-only and leaves editor autocomplete stuck on "Loading...".
   typescript: 6.0.3

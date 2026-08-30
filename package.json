@@ -33,22 +33,22 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
-    "@types/node": "26.1.2",
-    "@types/react": "19.2.17",
-    "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.4",
-    "esbuild": "0.28.1",
-    "playwright": "^1.62.0",
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.1.0",
+    "esbuild": "0.28.2",
+    "playwright": "^1.62.1",
     "typescript": "6.0.3",
-    "vite": "8.1.5",
-    "vitest": "4.1.10"
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
   },
   "dependencies": {
     "@mlc-ai/web-llm": "0.2.84",
     "@tailwindcss/vite": "4.3.3",
     "@tauri-apps/api": "^2.11.1",
     "@testing-library/dom": "10.4.1",
-    "@vitest/browser-playwright": "^4.1.10",
+    "@vitest/browser-playwright": "^4.1.11",
     "acorn": "8.18.0",
     "acorn-walk": "8.3.5",
     "modern-monaco": "0.4.2",
@@ -58,6 +58,9 @@
     "streamdown": "2.5.0",
     "sucrase": "^3.35.1",
     "tailwindcss": "4.3.3",
-    "tm-themes": "1.12.2"
+    "tm-themes": "1.12.8"
+  },
+  "overrides": {
+    "typescript": "6.0.3"
   }
 }

@@ -2,7 +2,7 @@
 // Ficheros .d.ts de @types/node cargados en el LSP del editor para que los
 // módulos `node:*` y los globals (process, Buffer, ...) tengan tipos.
 
-export const NODE_TYPES_VERSION = '26.1.0'
+export const NODE_TYPES_VERSION = '26.2.0'
 
 export const NODE_TYPES_FILES: readonly string[] = [
   "index.d.ts",
