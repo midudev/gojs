@@ -1,0 +1,14 @@
+{
+  "name": "GoJS",
+  "short_name": "GoJS",
+  "description": "A free, open-source JavaScript and TypeScript scratchpad with inline values, statement timings, real Node.js, and local AI.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#282a36",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
