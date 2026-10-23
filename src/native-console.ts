@@ -80,7 +80,7 @@ const PRELUDE_LINES: string[] = [
   '      if (v instanceof Set) return { __type: "Set", __values: Array.from(v, (x) => ser(x, seen)) };',
   '      if (v instanceof Map) return { __type: "Map", __entries: Array.from(v, (e) => [ser(e[0], seen), ser(e[1], seen)]) };',
   '      if (Array.isArray(v)) return v.map((x) => ser(x, seen));',
-  '      if (v instanceof Date) return { __type: "Object", __value: v.toISOString() };',
+  '      if (v instanceof Date) return { __type: "Object", __value: Number.isNaN(v.getTime()) ? "Invalid Date" : v.toISOString() };',
   '      if (v instanceof Error) return { __type: "Object", __value: v.stack || (v.name + ": " + v.message) };',
   '      if (v instanceof RegExp) return { __type: "Object", __value: v.toString() };',
   '      const o = {};',

@@ -36,6 +36,10 @@ function isPlainObject(value: object): boolean {
   return prototype === Object.prototype || prototype === null
 }
 
+function formatDateValue(value: Date): string {
+  return Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString()
+}
+
 export function serializeConsoleValue(value: any, seen = new WeakSet<object>()): any {
   if (value instanceof Promise) {
     return { __type: 'Promise', __value: 'Promise { <pending> }' }
@@ -80,6 +84,20 @@ export function serializeConsoleValue(value: any, seen = new WeakSet<object>()):
           serializeConsoleValue(key, seen),
           serializeConsoleValue(item, seen),
         ]),
+      }
+    }
+
+    if (value instanceof Date) {
+      return {
+        __type: 'Object',
+        __value: formatDateValue(value),
+      }
+    }
+
+    if (value instanceof RegExp) {
+      return {
+        __type: 'Object',
+        __value: value.toString(),
       }
     }
 
@@ -137,6 +155,19 @@ export function formatConsoleValueText(value: any): string {
   if (typeof value === 'string') return `"${value}"`
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value)
   if (typeof value === 'function') return value.toString()
+  if (typeof value === 'symbol') return value.toString()
+
+  if (value instanceof Date) {
+    return formatDateValue(value)
+  }
+
+  if (value instanceof RegExp) {
+    return value.toString()
+  }
+
+  if (value instanceof Error) {
+    return value.stack || `${value.name}: ${value.message}`
+  }
 
   if (Array.isArray(value)) {
     return `[${value.map(formatConsoleValueText).join(', ')}]`
@@ -151,4 +182,295 @@ export function formatConsoleValueText(value: any): string {
   }
 
   return String(value)
+}
+
+export type ConsoleCollection = {
+  entries: Array<[string, any]>
+  open: string
+  closed: string
+  close: string
+}
+
+export function getConsoleCollection(value: any): ConsoleCollection | null {
+  if (Array.isArray(value)) {
+    return {
+      entries: value.map((item, index) => [String(index), item]),
+      open: `Array(${value.length}) [`,
+      closed: `Array(${value.length}) […]`,
+      close: ']',
+    }
+  }
+
+  if (isSerializedConsoleValue(value)) {
+    if (value.__type === 'Set') {
+      return {
+        entries: value.__values.map((item, index) => [String(index), item]),
+        open: `Set(${value.__values.length}) {`,
+        closed: `Set(${value.__values.length}) {…}`,
+        close: '}',
+      }
+    }
+
+    if (value.__type === 'Map') {
+      return {
+        entries: value.__entries.map(([key, item]) => [formatConsoleValueText(key), item]),
+        open: `Map(${value.__entries.length}) {`,
+        closed: `Map(${value.__entries.length}) {…}`,
+        close: '}',
+      }
+    }
+
+    return null
+  }
+
+  if (value === null || typeof value !== 'object') return null
+
+  if (!isPlainObject(value)) return null
+
+  return {
+    entries: Object.entries(value),
+    open: '{',
+    closed: '{…}',
+    close: '}',
+  }
+}
+
+function formatConsoleObjectKey(key: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(key) || /^\d+$/.test(key) ? key : JSON.stringify(key)
+}
+
+export function createConsoleObjectTree(
+  value: any,
+  label?: string,
+  seen = new WeakSet<object>(),
+): HTMLElement {
+  const collection = getConsoleCollection(value)
+  if (!collection) {
+    const fallback = document.createElement('span')
+    appendFormattedValue(fallback, value, seen)
+    return fallback
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    if (seen.has(value)) {
+      const circular = document.createElement('span')
+      if (label !== undefined) {
+        const key = document.createElement('span')
+        key.className = 'log-json-key'
+        key.textContent = `${formatConsoleObjectKey(label)}: `
+        circular.appendChild(key)
+      }
+      const valueSpan = document.createElement('span')
+      valueSpan.className = 'log-object'
+      valueSpan.textContent = '[Circular]'
+      circular.appendChild(valueSpan)
+      return circular
+    }
+    seen.add(value)
+  }
+
+  try {
+    if (collection.entries.length === 0) {
+      const empty = document.createElement('span')
+      empty.className = 'log-object-empty'
+      if (label !== undefined) {
+        const key = document.createElement('span')
+        key.className = 'log-json-key'
+        key.textContent = `${formatConsoleObjectKey(label)}: `
+        empty.appendChild(key)
+      }
+      empty.appendChild(document.createTextNode(collection.open + collection.close))
+      return empty
+    }
+
+    const details = document.createElement('details')
+    details.className = 'log-object-tree'
+    details.open = true
+    details.addEventListener('click', (event) => event.stopPropagation())
+
+    const summary = document.createElement('summary')
+    summary.className = 'log-object-summary'
+
+    const chevron = document.createElement('span')
+    chevron.className = 'log-object-chevron'
+    chevron.setAttribute('aria-hidden', 'true')
+    chevron.textContent = '›'
+    summary.appendChild(chevron)
+
+    if (label !== undefined) {
+      const key = document.createElement('span')
+      key.className = 'log-json-key'
+      key.textContent = `${formatConsoleObjectKey(label)}: `
+      summary.appendChild(key)
+    }
+
+    const closed = document.createElement('span')
+    closed.className = 'log-object-closed'
+    closed.textContent = collection.closed
+    summary.appendChild(closed)
+
+    const open = document.createElement('span')
+    open.className = 'log-object-open'
+    open.textContent = collection.open
+    summary.appendChild(open)
+
+    details.appendChild(summary)
+
+    const body = document.createElement('div')
+    body.className = 'log-object-body'
+
+    for (const [keyText, item] of collection.entries) {
+      const nestedCollection = getConsoleCollection(item)
+      if (nestedCollection) {
+        body.appendChild(createConsoleObjectTree(item, keyText, seen))
+        continue
+      }
+
+      const row = document.createElement('div')
+      row.className = 'log-object-field'
+
+      const key = document.createElement('span')
+      key.className = 'log-json-key'
+      key.textContent = `${formatConsoleObjectKey(keyText)}: `
+      row.appendChild(key)
+      appendFormattedValue(row, item, seen)
+      body.appendChild(row)
+    }
+
+    const closing = document.createElement('div')
+    closing.className = 'log-object-closing'
+    closing.textContent = collection.close
+    body.appendChild(closing)
+
+    details.appendChild(body)
+    return details
+  } finally {
+    if (typeof value === 'object' && value !== null) {
+      seen.delete(value)
+    }
+  }
+}
+
+// Añadir valor formateado al contenedor con syntax highlighting
+export function appendFormattedValue(
+  container: HTMLElement,
+  value: any,
+  seen = new WeakSet<object>(),
+) {
+  const collection = getConsoleCollection(value)
+  if (collection && !Array.isArray(value)) {
+    container.appendChild(createConsoleObjectTree(value, undefined, seen))
+    return
+  }
+
+  // Manejar valores serializados especiales del worker (promesas, funciones, etc.)
+  if (isSerializedConsoleValue(value)) {
+    const span = document.createElement('span')
+
+    switch (value.__type) {
+      case 'Promise':
+        span.className = 'log-promise'
+        break
+      case 'Function':
+        span.className = 'log-function'
+        break
+      case 'Set':
+      case 'Map':
+        span.className = 'log-array'
+        break
+      case 'Object':
+      case 'Unknown':
+      case 'Circular':
+        span.className = 'log-object'
+        break
+      default:
+        span.className = 'log-object'
+    }
+
+    span.textContent = formatConsoleValueText(value)
+    container.appendChild(span)
+    return
+  }
+
+  if (value === null) {
+    const span = document.createElement('span')
+    span.className = 'log-null'
+    span.textContent = 'null'
+    container.appendChild(span)
+  } else if (value === undefined) {
+    const span = document.createElement('span')
+    span.className = 'log-undefined'
+    span.textContent = 'undefined'
+    container.appendChild(span)
+  } else if (typeof value === 'string') {
+    const span = document.createElement('span')
+    span.className = 'log-string'
+    span.textContent = `"${value}"`
+    container.appendChild(span)
+  } else if (typeof value === 'number') {
+    const span = document.createElement('span')
+    span.className = 'log-number'
+    span.textContent = String(value)
+    container.appendChild(span)
+  } else if (typeof value === 'boolean') {
+    const span = document.createElement('span')
+    span.className = 'log-boolean'
+    span.textContent = String(value)
+    container.appendChild(span)
+  } else if (typeof value === 'function') {
+    const span = document.createElement('span')
+    span.className = 'log-function'
+    span.textContent = value.toString()
+    container.appendChild(span)
+  } else if (typeof value === 'object') {
+    if (seen.has(value)) {
+      const span = document.createElement('span')
+      span.className = 'log-object'
+      span.textContent = '[Circular]'
+      container.appendChild(span)
+      return
+    }
+
+    // Manejar arrays de forma especial para mostrarlos en formato compacto
+    if (Array.isArray(value)) {
+      seen.add(value)
+      try {
+        const span = document.createElement('span')
+        span.className = 'log-array'
+        span.textContent = '['
+
+        value.forEach((item, index) => {
+          if (index > 0) {
+            span.appendChild(document.createTextNode(', '))
+          }
+
+          // Crear un span temporal para obtener el valor formateado
+          const tempSpan = document.createElement('span')
+
+          // Si el item es un objeto complejo, usar texto compacto
+          if (typeof item === 'object' && item !== null && !Array.isArray(item) && !isSerializedConsoleValue(item)) {
+            tempSpan.className = 'log-object'
+            tempSpan.textContent = formatConsoleValueText(item)
+          } else {
+            appendFormattedValue(tempSpan, item, seen)
+          }
+
+          span.appendChild(tempSpan)
+        })
+
+        span.appendChild(document.createTextNode(']'))
+        container.appendChild(span)
+      } finally {
+        seen.delete(value)
+      }
+    } else {
+      // Objetos no planos (Date, RegExp, TypedArray, etc.) que no son colecciones desplegables
+      const span = document.createElement('span')
+      span.className = 'log-object'
+      span.textContent = formatConsoleValueText(value)
+      container.appendChild(span)
+    }
+  } else {
+    container.appendChild(document.createTextNode(String(value)))
+  }
 }

@@ -126,4 +126,45 @@ describe('instrumentNodeCode', () => {
     const out = instrumentNodeCode('')
     expect(out).toContain(JSON.stringify(NATIVE_LOG_SENTINEL))
   })
+
+  it('serializa instancias de Date válidas e inválidas sin fallar', () => {
+    const writes: string[] = []
+    const originalConsole = globalThis.console
+    const originalProcess = (globalThis as any).process
+    globalThis.console = { ...originalConsole } as Console
+    ;(globalThis as any).process = {
+      stdout: {
+        write: (chunk: string) => {
+          writes.push(String(chunk))
+          return true
+        },
+      },
+    }
+
+    try {
+      const code = instrumentNodeCode(
+        "console.log(new Date('2026-10-23T10:20:30.000Z'))\nconsole.log(new Date('invalid'))",
+      )
+      new Function(code)()
+    } finally {
+      ;(globalThis as any).process = originalProcess
+      globalThis.console = originalConsole
+    }
+
+    const parsed = writes.map((line) => parseNativeLogLine(line.trim()))
+    expect(parsed).toEqual([
+      {
+        type: 'log',
+        line: null,
+        data: { __type: 'Object', __value: '2026-10-23T10:20:30.000Z' },
+        columns: undefined,
+      },
+      {
+        type: 'log',
+        line: null,
+        data: { __type: 'Object', __value: 'Invalid Date' },
+        columns: undefined,
+      },
+    ])
+  })
 })
