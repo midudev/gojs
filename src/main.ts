@@ -3810,19 +3810,8 @@ function createTableElement(data: any, columns?: string[]): HTMLElement {
 
 // Formatear valor de celda de tabla
 function formatCellValue(value: any): string {
-  if (isSerializedConsoleValue(value)) return formatConsoleValueText(value)
-  if (value === null) return 'null'
-  if (value === undefined) return 'undefined'
   if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  if (typeof value === 'object') {
-    try {
-      return JSON.stringify(value)
-    } catch {
-      return String(value)
-    }
-  }
-  return String(value)
+  return formatConsoleValueText(value)
 }
 
 // Destacar línea en el editor

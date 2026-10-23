@@ -36,8 +36,23 @@ function isPlainObject(value: object): boolean {
   return prototype === Object.prototype || prototype === null
 }
 
+function isSerializableObjectRecord(value: object): boolean {
+  if (isPlainObject(value)) return true
+  return Object.prototype.toString.call(value) === '[object Object]'
+}
+
 function formatDateValue(value: Date): string {
   return Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString()
+}
+
+function formatArrayBufferView(value: ArrayBufferView): string {
+  if (value instanceof DataView) {
+    return `DataView(${value.byteLength})`
+  }
+  const tag = value.constructor?.name || 'TypedArray'
+  const arrayLike = value as unknown as ArrayLike<number | bigint>
+  const items = Array.from(arrayLike, (item) => (typeof item === 'bigint' ? `${item}n` : String(item))).join(', ')
+  return `${tag}(${arrayLike.length}) [${items}]`
 }
 
 export function serializeConsoleValue(value: any, seen = new WeakSet<object>()): any {
@@ -61,6 +76,10 @@ export function serializeConsoleValue(value: any, seen = new WeakSet<object>()):
 
   if (typeof value !== 'object') {
     return value
+  }
+
+  if (value instanceof Number || value instanceof String || value instanceof Boolean) {
+    return value.valueOf()
   }
 
   if (seen.has(value)) {
@@ -101,29 +120,69 @@ export function serializeConsoleValue(value: any, seen = new WeakSet<object>()):
       }
     }
 
-    if (value instanceof Error) {
+    if (value instanceof Error || (typeof DOMException !== 'undefined' && value instanceof DOMException)) {
       return {
         __type: 'Object',
         __value: value.stack || `${value.name}: ${value.message}`,
       }
     }
 
+    if (typeof URL !== 'undefined' && value instanceof URL) {
+      return {
+        __type: 'Object',
+        __value: value.toString(),
+      }
+    }
+
+    if (typeof URLSearchParams !== 'undefined' && value instanceof URLSearchParams) {
+      const query = value.toString()
+      return {
+        __type: 'Object',
+        __value: query ? `URLSearchParams { ${query} }` : 'URLSearchParams {}',
+      }
+    }
+
+    if (value instanceof WeakMap) {
+      return { __type: 'Object', __value: 'WeakMap { <items unknown> }' }
+    }
+
+    if (value instanceof WeakSet) {
+      return { __type: 'Object', __value: 'WeakSet { <items unknown> }' }
+    }
+
+    if (typeof WeakRef !== 'undefined' && value instanceof WeakRef) {
+      return { __type: 'Object', __value: 'WeakRef {}' }
+    }
+
+    if (value instanceof ArrayBuffer) {
+      return { __type: 'Object', __value: `ArrayBuffer(${value.byteLength})` }
+    }
+
+    if (typeof SharedArrayBuffer !== 'undefined' && value instanceof SharedArrayBuffer) {
+      return { __type: 'Object', __value: `SharedArrayBuffer(${value.byteLength})` }
+    }
+
+    if (ArrayBuffer.isView(value)) {
+      return { __type: 'Object', __value: formatArrayBufferView(value) }
+    }
+
     if (Array.isArray(value)) {
       return value.map((item) => serializeConsoleValue(item, seen))
     }
 
-    if (isPlainObject(value)) {
-      return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [key, serializeConsoleValue(item, seen)]),
-      )
+    if (isSerializableObjectRecord(value)) {
+      const result: Record<string, any> = {}
+      for (const key of Object.keys(value)) {
+        try {
+          result[key] = serializeConsoleValue((value as any)[key], seen)
+        } catch {
+          result[key] = { __type: 'Unknown', __value: '[Unable to serialize]' }
+        }
+      }
+      return result
     }
 
-    try {
-      structuredClone(value)
-      return value
-    } catch {
-      return { __type: 'Object', __value: Object.prototype.toString.call(value) }
-    }
+    return { __type: 'Object', __value: Object.prototype.toString.call(value) }
   } catch {
     return { __type: 'Unknown', __value: '[Unable to serialize]' }
   } finally {
@@ -136,14 +195,14 @@ export function serializeConsoleArguments(args: any[]): any {
   return values.length === 1 ? values[0] : { __type: 'Arguments', __values: values }
 }
 
-export function formatConsoleValueText(value: any): string {
+export function formatConsoleValueText(value: any, seen = new WeakSet<object>()): string {
   if (isSerializedConsoleValue(value)) {
     switch (value.__type) {
       case 'Set':
-        return `Set(${value.__values.length}) { ${value.__values.map(formatConsoleValueText).join(', ')} }`
+        return `Set(${value.__values.length}) { ${value.__values.map((item) => formatConsoleValueText(item, seen)).join(', ')} }`
       case 'Map':
         return `Map(${value.__entries.length}) { ${value.__entries
-          .map(([key, item]) => `${formatConsoleValueText(key)} => ${formatConsoleValueText(item)}`)
+          .map(([key, item]) => `${formatConsoleValueText(key, seen)} => ${formatConsoleValueText(item, seen)}`)
           .join(', ')} }`
       default:
         return value.__value
@@ -153,7 +212,8 @@ export function formatConsoleValueText(value: any): string {
   if (value === null) return 'null'
   if (value === undefined) return 'undefined'
   if (typeof value === 'string') return `"${value}"`
-  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (typeof value === 'bigint') return `${value}n`
   if (typeof value === 'function') return value.toString()
   if (typeof value === 'symbol') return value.toString()
 
@@ -169,15 +229,40 @@ export function formatConsoleValueText(value: any): string {
     return value.stack || `${value.name}: ${value.message}`
   }
 
+  if (ArrayBuffer.isView(value)) {
+    return formatArrayBufferView(value)
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return `ArrayBuffer(${value.byteLength})`
+  }
+
   if (Array.isArray(value)) {
-    return `[${value.map(formatConsoleValueText).join(', ')}]`
+    if (seen.has(value)) return '[Circular]'
+    seen.add(value)
+    try {
+      return `[${value.map((item) => formatConsoleValueText(item, seen)).join(', ')}]`
+    } finally {
+      seen.delete(value)
+    }
   }
 
   if (typeof value === 'object') {
+    if (seen.has(value)) return '[Circular]'
+    seen.add(value)
     try {
+      if (isSerializableObjectRecord(value)) {
+        const entries = Object.entries(value)
+        if (entries.length === 0) return '{}'
+        return `{ ${entries
+          .map(([key, item]) => `${formatConsoleObjectKey(key)}: ${formatConsoleValueText(item, seen)}`)
+          .join(', ')} }`
+      }
       return JSON.stringify(value) ?? String(value)
     } catch {
       return String(value)
+    } finally {
+      seen.delete(value)
     }
   }
 
@@ -225,7 +310,27 @@ export function getConsoleCollection(value: any): ConsoleCollection | null {
 
   if (value === null || typeof value !== 'object') return null
 
-  if (!isPlainObject(value)) return null
+  if (value instanceof Set) {
+    const values = Array.from(value)
+    return {
+      entries: values.map((item, index) => [String(index), item]),
+      open: `Set(${values.length}) {`,
+      closed: `Set(${values.length}) {…}`,
+      close: '}',
+    }
+  }
+
+  if (value instanceof Map) {
+    const entries = Array.from(value.entries())
+    return {
+      entries: entries.map(([key, item]) => [formatConsoleValueText(key), item]),
+      open: `Map(${entries.length}) {`,
+      closed: `Map(${entries.length}) {…}`,
+      close: '}',
+    }
+  }
+
+  if (!isSerializableObjectRecord(value)) return null
 
   return {
     entries: Object.entries(value),
@@ -411,6 +516,11 @@ export function appendFormattedValue(
     const span = document.createElement('span')
     span.className = 'log-number'
     span.textContent = String(value)
+    container.appendChild(span)
+  } else if (typeof value === 'bigint') {
+    const span = document.createElement('span')
+    span.className = 'log-number'
+    span.textContent = `${value}n`
     container.appendChild(span)
   } else if (typeof value === 'boolean') {
     const span = document.createElement('span')

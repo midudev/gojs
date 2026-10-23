@@ -95,4 +95,43 @@ describe('console value serialization', () => {
     appendFormattedValue(nestedContainer, serializeConsoleValue({ now: date, items: [date] }))
     expect(nestedContainer.textContent).toContain('2026-10-23T10:20:30.000Z')
   })
+
+  it('serializes custom class instances, typed arrays, URLs and BigInt without leaking internal markers', () => {
+    class User {
+      name: string
+      createdAt: Date
+      tags: Set<string>
+      self?: User
+      constructor(name: string, createdAt: Date) {
+        this.name = name
+        this.createdAt = createdAt
+        this.tags = new Set(['js'])
+      }
+    }
+
+    const date = new Date('2026-10-23T10:20:30.000Z')
+    const user = new User('midu', date)
+    user.self = user
+
+    const serializedUser = serializeConsoleValue(user)
+    expect(serializedUser).toEqual({
+      name: 'midu',
+      createdAt: { __type: 'Object', __value: '2026-10-23T10:20:30.000Z' },
+      tags: { __type: 'Set', __values: ['js'] },
+      self: { __type: 'Circular', __value: '[Circular]' },
+    })
+
+    expect(formatConsoleValueText(serializeConsoleValue(new Uint8Array([1, 2, 3])))).toBe(
+      'Uint8Array(3) [1, 2, 3]',
+    )
+    expect(formatConsoleValueText(serializeConsoleValue(new ArrayBuffer(8)))).toBe('ArrayBuffer(8)')
+    expect(formatConsoleValueText(serializeConsoleValue(new URL('https://gojs.dev/play')))).toBe(
+      'https://gojs.dev/play',
+    )
+    expect(
+      formatConsoleValueText(
+        serializeConsoleValue([{ date, count: 10n, set: new Set([1]) }]),
+      ),
+    ).toBe('[{ date: 2026-10-23T10:20:30.000Z, count: 10n, set: Set(1) { 1 } }]')
+  })
 })
