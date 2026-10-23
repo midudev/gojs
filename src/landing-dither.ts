@@ -39,8 +39,11 @@ export interface DitherField {
 export function createDitherField({ canvas, palette, pixelSize, sample, onResize }: DitherFieldOptions): DitherField {
   const context = canvas.getContext('2d')
   const colors = palette.map(parseColor)
+  const colors32 = Uint32Array.from(colors, (rgba) => new Uint32Array(new Uint8ClampedArray(rgba).buffer)[0])
+  const color0 = colors32[0]
   const levels = colors.length - 1
   let image: ImageData | null = null
+  let pixels: Uint32Array | null = null
 
   const resize = () => {
     const container = canvas.parentElement ?? canvas
@@ -53,26 +56,28 @@ export function createDitherField({ canvas, palette, pixelSize, sample, onResize
       canvas.style.width = `${columns * pixelSize}px`
       canvas.style.height = `${rows * pixelSize}px`
       image = context.createImageData(columns, rows)
+      pixels = new Uint32Array(image.data.buffer)
     }
     onResize?.(width, height)
   }
 
   const render = (time: number) => {
-    if (!context || !image) return
-    const { data, width, height } = image
+    if (!context || !image || !pixels) return
+    const { width, height } = image
+    let pixelIndex = 0
     for (let row = 0; row < height; row++) {
       const y = (row + 0.5) * pixelSize
+      const rowThresholdOffset = (row & 7) << 3
       for (let column = 0; column < width; column++) {
         const intensity = sample((column + 0.5) * pixelSize, y, time)
-        const scaled = Math.min(Math.max(intensity, 0), 1) * levels
-        const base = Math.min(Math.floor(scaled), levels - 1)
-        const index = scaled - base > THRESHOLDS[((row & 7) << 3) | (column & 7)] ? base + 1 : base
-        const color = colors[index]
-        const offset = (row * width + column) * 4
-        data[offset] = color[0]
-        data[offset + 1] = color[1]
-        data[offset + 2] = color[2]
-        data[offset + 3] = color[3]
+        if (intensity <= 0) {
+          pixels[pixelIndex++] = color0
+          continue
+        }
+        const scaled = (intensity >= 1 ? 1 : intensity) * levels
+        const base = Math.min(scaled | 0, levels - 1)
+        const index = scaled - base > THRESHOLDS[rowThresholdOffset | (column & 7)] ? base + 1 : base
+        pixels[pixelIndex++] = colors32[index]
       }
     }
     context.putImageData(image, 0, 0)

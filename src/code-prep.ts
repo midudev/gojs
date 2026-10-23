@@ -107,6 +107,11 @@ export function prepareCode(input: {
   })
 }
 
+/** Pre-arranca el worker de preparación en segundo plano para ahorrar su carga inicial. */
+export function warmupCodePrepWorker(): void {
+  ensureWorker()
+}
+
 /** Destruye el worker de preparación (p. ej. al cerrar la app). */
 export function destroyCodePrepWorker(): void {
   if (worker) {

@@ -1,4 +1,7 @@
 import * as acorn from 'acorn'
+import { buildImportMap, packageRootOf, resolveModuleSpecifier } from './import-map'
+
+export { buildImportMap, resolveModuleSpecifier }
 
 interface ExpressionInfo {
   start: number
@@ -23,9 +26,6 @@ function mapOriginalCodeLines(code: string) {
     lineMap.set(i, i) // mapeo 1:1 (sin inyecciones)
   }
 }
-
-// CDN usado para resolver imports de paquetes npm (bare specifiers) a módulos ESM.
-const ESM_CDN_BASE = 'https://esm.sh/'
 
 // Sucrase se carga de forma diferida: solo se necesita al ejecutar y no debe
 // engordar el bundle inicial.
@@ -55,50 +55,13 @@ export async function transpileToJs(code: string): Promise<string> {
 }
 
 /**
- * Resuelve el specifier de un import a algo que `import()` pueda cargar en el navegador.
- *
- * - URLs absolutas (`https:`, `data:`, `blob:`, `node:`…), protocolo-relativas (`//`),
- *   rutas absolutas (`/`) y relativas (`./`, `../`) se dejan intactas.
- * - Los "bare specifiers" (paquetes npm: `lodash`, `lodash/fp`, `@scope/pkg`,
- *   `zod@3`…) se mapean al CDN ESM para que el import funcione dentro del worker,
- *   que no dispone de resolución de módulos de node.
- */
-export function resolveModuleSpecifier(specifier: string): string {
-  const value = specifier.trim()
-
-  if (
-    value === '' ||
-    /^[a-z][a-z0-9+.-]*:/i.test(value) || // esquema: https:, data:, blob:, node:, file:…
-    value.startsWith('//') || // protocolo-relativo
-    value.startsWith('/') || // ruta absoluta
-    value.startsWith('./') ||
-    value.startsWith('../')
-  ) {
-    return value
-  }
-
-  // Bare specifier -> paquete npm servido como ESM desde el CDN.
-  return `${ESM_CDN_BASE}${value}`
-}
-
-/**
- * Devuelve la raíz del paquete de un bare specifier:
- *   'lodash-es'        -> 'lodash-es'
- *   'lodash-es/fp'     -> 'lodash-es'
- *   '@scope/pkg/sub'   -> '@scope/pkg'
- */
-function packageRootOf(specifier: string): string {
-  const parts = specifier.split('/')
-  if (specifier.startsWith('@')) return parts.slice(0, 2).join('/')
-  return parts[0]
-}
-
-/**
  * Extrae los "bare specifiers" (paquetes npm) importados en el código, tanto de
  * `import ... from '...'` como de `import('...')` dinámicos. Ignora URLs, rutas
  * relativas/absolutas y esquemas (node:, data:, ...).
  */
 export function collectBareSpecifiers(code: string): string[] {
+  if (!/\b(?:import|export)\b/.test(code)) return []
+
   let ast: any
   try {
     ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' })
@@ -114,6 +77,27 @@ export function collectBareSpecifiers(code: string): string[] {
     found.add(value)
   }
 
+  // Si no hay `import(...)` dinámicos, basta con inspeccionar las declaraciones
+  // de primer nivel del módulo sin recorrer todo el AST.
+  if (!/\bimport\s*(?:\(|\/\*|\/\/)/.test(code)) {
+    const body = ast.body as any[]
+    if (Array.isArray(body)) {
+      for (let i = 0; i < body.length; i++) {
+        const node = body[i]
+        if (
+          node &&
+          (node.type === 'ImportDeclaration' ||
+            node.type === 'ExportNamedDeclaration' ||
+            node.type === 'ExportAllDeclaration') &&
+          node.source
+        ) {
+          consider(node.source.value)
+        }
+      }
+    }
+    return [...found]
+  }
+
   const walk = (node: any) => {
     if (!node || typeof node.type !== 'string') return
 
@@ -127,10 +111,14 @@ export function collectBareSpecifiers(code: string): string[] {
       consider(node.source.value)
     }
 
-    for (const key of Object.keys(node)) {
-      const child = (node as any)[key]
-      if (Array.isArray(child)) child.forEach(walk)
-      else if (child && typeof child.type === 'string') walk(child)
+    for (const key in node) {
+      if (key === 'start' || key === 'end' || key === 'loc' || key === 'type') continue
+      const child = node[key]
+      if (Array.isArray(child)) {
+        for (let i = 0; i < child.length; i++) walk(child[i])
+      } else if (child && typeof child.type === 'string') {
+        walk(child)
+      }
     }
   }
 
@@ -168,6 +156,8 @@ export function isNodeBuiltinSpecifier(specifier: string): boolean {
  * originales (p. ej. `node:os`, `fs/promises`) para poder mostrarlos al usuario.
  */
 export function collectNodeBuiltinImports(code: string): string[] {
+  if (!/\b(?:import|export)\b/.test(code)) return []
+
   let ast: any
   try {
     ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' })
@@ -179,6 +169,25 @@ export function collectNodeBuiltinImports(code: string): string[] {
 
   const consider = (value: unknown) => {
     if (typeof value === 'string' && isNodeBuiltinSpecifier(value)) found.add(value)
+  }
+
+  if (!/\bimport\s*(?:\(|\/\*|\/\/)/.test(code)) {
+    const body = ast.body as any[]
+    if (Array.isArray(body)) {
+      for (let i = 0; i < body.length; i++) {
+        const node = body[i]
+        if (
+          node &&
+          (node.type === 'ImportDeclaration' ||
+            node.type === 'ExportNamedDeclaration' ||
+            node.type === 'ExportAllDeclaration') &&
+          node.source
+        ) {
+          consider(node.source.value)
+        }
+      }
+    }
+    return [...found]
   }
 
   const walk = (node: any) => {
@@ -194,10 +203,14 @@ export function collectNodeBuiltinImports(code: string): string[] {
       consider(node.source.value)
     }
 
-    for (const key of Object.keys(node)) {
-      const child = (node as any)[key]
-      if (Array.isArray(child)) child.forEach(walk)
-      else if (child && typeof child.type === 'string') walk(child)
+    for (const key in node) {
+      if (key === 'start' || key === 'end' || key === 'loc' || key === 'type') continue
+      const child = node[key]
+      if (Array.isArray(child)) {
+        for (let i = 0; i < child.length; i++) walk(child[i])
+      } else if (child && typeof child.type === 'string') {
+        walk(child)
+      }
     }
   }
 
@@ -207,12 +220,22 @@ export function collectNodeBuiltinImports(code: string): string[] {
 
 const CONSOLE_CALLBACK_METHODS = new Set(['log', 'info', 'warn', 'error', 'table', 'count', 'countReset', 'time', 'timeEnd'])
 
+function isDirectMutationTarget(node: any, parent: any): boolean {
+  return (
+    (parent?.type === 'AssignmentExpression' && parent.left === node) ||
+    (parent?.type === 'UpdateExpression' && parent.argument === node) ||
+    (parent?.type === 'UnaryExpression' && parent.operator === 'delete')
+  )
+}
+
 /**
  * Conserva la línea de origen cuando un método de console se pasa como callback
  * (`promise.catch(console.error)`). La llamada nativa pierde el frame del código
  * de usuario; el wrapper vuelve a ejecutar el método en la misma línea.
  */
 export function wrapConsoleCallbacks(code: string): string {
+  if (!/\bconsole\b/.test(code)) return code
+
   let ast: any
   try {
     ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module' })
@@ -232,20 +255,25 @@ export function wrapConsoleCallbacks(code: string): string {
       node.object.name === 'console' &&
       node.property?.type === 'Identifier' &&
       CONSOLE_CALLBACK_METHODS.has(node.property.name) &&
-      !(parent?.type === 'CallExpression' && parent.callee === node)
+      !(parent?.type === 'CallExpression' && parent.callee === node) &&
+      !isDirectMutationTarget(node, parent)
     ) {
       replacements.push({ start: node.start, end: node.end, method: node.property.name })
     }
 
-    for (const key of Object.keys(node)) {
-      if (key === 'start' || key === 'end') continue
+    for (const key in node) {
+      if (key === 'start' || key === 'end' || key === 'loc' || key === 'type') continue
       const child = node[key]
-      if (Array.isArray(child)) child.forEach((item) => walk(item, node))
-      else if (child && typeof child.type === 'string') walk(child, node)
+      if (Array.isArray(child)) {
+        for (let i = 0; i < child.length; i++) walk(child[i], node)
+      } else if (child && typeof child.type === 'string') {
+        walk(child, node)
+      }
     }
   }
 
   walk(ast)
+  if (replacements.length === 0) return code
 
   let result = code
   for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
@@ -262,6 +290,8 @@ export function wrapConsoleCallbacks(code: string): string {
  * JavaScriptCore/WKWebView puede omitir el frame del código de usuario.
  */
 export function instrumentConsoleLineNumbers(code: string): string {
+  if (!/\bconsole\b/.test(code)) return code
+
   let ast: any
   try {
     ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module', locations: true })
@@ -281,9 +311,7 @@ export function instrumentConsoleLineNumbers(code: string): string {
       node.object.name === 'console' &&
       node.property?.type === 'Identifier' &&
       CONSOLE_CALLBACK_METHODS.has(node.property.name) &&
-      !(parent?.type === 'AssignmentExpression' && parent.left === node) &&
-      !(parent?.type === 'UpdateExpression' && parent.argument === node) &&
-      !(parent?.type === 'UnaryExpression' && parent.operator === 'delete')
+      !isDirectMutationTarget(node, parent)
     ) {
       replacements.push({
         start: node.start,
@@ -293,15 +321,19 @@ export function instrumentConsoleLineNumbers(code: string): string {
       })
     }
 
-    for (const key of Object.keys(node)) {
-      if (key === 'start' || key === 'end' || key === 'loc') continue
+    for (const key in node) {
+      if (key === 'start' || key === 'end' || key === 'loc' || key === 'type') continue
       const child = node[key]
-      if (Array.isArray(child)) child.forEach((item) => walk(item, node))
-      else if (child && typeof child.type === 'string') walk(child, node)
+      if (Array.isArray(child)) {
+        for (let i = 0; i < child.length; i++) walk(child[i], node)
+      } else if (child && typeof child.type === 'string') {
+        walk(child, node)
+      }
     }
   }
 
   walk(ast)
+  if (replacements.length === 0) return code
 
   let result = code
   for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
@@ -313,21 +345,74 @@ export function instrumentConsoleLineNumbers(code: string): string {
 }
 
 /**
- * Construye un import map (formato WICG) que mapea cada paquete npm importado a su
- * URL en el CDN ESM, incluyendo la entrada con barra final para resolver subrutas.
- * Este mapa alimenta al LSP de modern-monaco para dar IntelliSense y carga de tipos.
+ * Ejecuta en una única pasada de AST tanto el envoltorio de callbacks de
+ * console (`wrapConsoleCallbacks`) como la instrumentación explícita de números
+ * de línea (`instrumentConsoleLineNumbers`). Produce exactamente el mismo
+ * resultado que encadenar ambas funciones, ahorrando un `acorn.parse` completo.
  */
-export function buildImportMap(specifiers: string[]): Record<string, string> {
-  const imports: Record<string, string> = {}
+export function instrumentConsole(code: string): string {
+  if (!/\bconsole\b/.test(code)) return code
 
-  for (const specifier of specifiers) {
-    imports[specifier] = resolveModuleSpecifier(specifier)
-
-    const root = packageRootOf(specifier)
-    imports[`${root}/`] = `${ESM_CDN_BASE}${root}/`
+  let ast: any
+  try {
+    ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module', locations: true })
+  } catch {
+    return code
   }
 
-  return imports
+  const replacements: Array<{
+    start: number
+    end: number
+    method: string
+    line: number
+    isCallback: boolean
+  }> = []
+
+  const walk = (node: any, parent: any = null) => {
+    if (!node || typeof node.type !== 'string') return
+
+    if (
+      node.type === 'MemberExpression' &&
+      !node.computed &&
+      node.object?.type === 'Identifier' &&
+      node.object.name === 'console' &&
+      node.property?.type === 'Identifier' &&
+      CONSOLE_CALLBACK_METHODS.has(node.property.name) &&
+      !isDirectMutationTarget(node, parent)
+    ) {
+      replacements.push({
+        start: node.start,
+        end: node.end,
+        method: node.property.name,
+        line: node.loc.start.line,
+        isCallback: !(parent?.type === 'CallExpression' && parent.callee === node),
+      })
+    }
+
+    for (const key in node) {
+      if (key === 'start' || key === 'end' || key === 'loc' || key === 'type') continue
+      const child = node[key]
+      if (Array.isArray(child)) {
+        for (let i = 0; i < child.length; i++) walk(child[i], node)
+      } else if (child && typeof child.type === 'string') {
+        walk(child, node)
+      }
+    }
+  }
+
+  walk(ast)
+  if (replacements.length === 0) return code
+
+  let result = code
+  for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
+    const atLineCall = `console.__atLine__(${JSON.stringify(replacement.method)}, ${replacement.line})`
+    const wrapper = replacement.isCallback
+      ? `(...__console_args__) => ${atLineCall}(...__console_args__)`
+      : atLineCall
+    result = result.slice(0, replacement.start) + wrapper + result.slice(replacement.end)
+  }
+
+  return result
 }
 
 /**
@@ -339,6 +424,8 @@ export function buildImportMap(specifiers: string[]): Record<string, string> {
  * romper el mapeo de líneas de la consola.
  */
 export function transformImports(code: string): string {
+  if (!/\bimport\b/.test(code)) return code
+
   let ast: any
   try {
     ast = acorn.parse(code, {

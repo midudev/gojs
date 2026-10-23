@@ -4,6 +4,7 @@ import {
   collectBareSpecifiers,
   collectNodeBuiltinImports,
   injectExpressionLogging,
+  instrumentConsole,
   instrumentConsoleLineNumbers,
   isNodeBuiltinSpecifier,
   lineMap,
@@ -132,6 +133,11 @@ describe('console line instrumentation', () => {
   it('does not rewrite assignments to console methods', () => {
     const code = 'console.log = customLogger'
     expect(instrumentConsoleLineNumbers(code)).toBe(code)
+  })
+
+  it('instrumentConsole combines callback wrapping and line instrumentation in one pass', () => {
+    const code = "console.log('start')\nfetch('/api')\n  .then(console.info)\n  .catch(console.error)"
+    expect(instrumentConsole(code)).toBe(instrumentConsoleLineNumbers(wrapConsoleCallbacks(code)))
   })
 })
 

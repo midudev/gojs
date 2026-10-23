@@ -53,12 +53,14 @@ async function start(): Promise<void> {
   if (isDesktop || isPlaygroundRoute) {
     document.documentElement.classList.toggle('is-desktop', isDesktop)
     applySavedWorkbenchLayout()
-    if (!isLightweightEmbed) await import('./tailwind.css')
-    await import('./style.css')
     document.querySelector('#landing')?.setAttribute('hidden', '')
     document.querySelector('#app')?.removeAttribute('hidden')
     document.documentElement.lang = 'en'
     document.title = 'GoJS.app - JavaScript/TypeScript Playground'
+    await Promise.all([
+      isLightweightEmbed ? Promise.resolve() : import('./tailwind.css'),
+      import('./style.css'),
+    ])
     await import('./main')
     document.documentElement.dataset.stylesReady = ''
     return

@@ -31,12 +31,8 @@ import {
   type Theme,
 } from './storage'
 import { formatCode, destroyPrettierWorker } from './prettier'
-import {
-  transpileToJs,
-  collectBareSpecifiers,
-  buildImportMap,
-} from './console'
-import { prepareCode, destroyCodePrepWorker, isWorkerLoadFailure, WorkerLoadError } from './code-prep'
+import { buildImportMap } from './import-map'
+import { prepareCode, destroyCodePrepWorker, isWorkerLoadFailure, warmupCodePrepWorker, WorkerLoadError } from './code-prep'
 import {
   appendFormattedValue,
   formatConsoleValueText,
@@ -71,15 +67,12 @@ import { $, $$ } from './dom'
 import { chatbot, ChatbotState } from './chatbot'
 import './keyboard-events'
 import './resize-panels'
-import { createRoot, type Root } from 'react-dom/client'
-import { ChatResponse } from './ChatResponse'
-import React from 'react'
-import {
-  runAgent,
-  type AgentBridge,
-  type AgentEditInfo,
-  type AgentExchange,
-  type AgentRunResult,
+import type { ChatResponseRoot } from './ChatResponse'
+import type {
+  AgentBridge,
+  AgentEditInfo,
+  AgentExchange,
+  AgentRunResult,
 } from './agent/agent'
 import {
   dequeueChatMessage,
@@ -106,7 +99,6 @@ import {
   type Dependency,
   type NodeInfo,
 } from './native-runtime'
-import { injectNativeExpressionLogging, instrumentNodeCode, parseNativeLogLine } from './native-console'
 import { getLlamaInfo, type LlamaInfo, type LlamaModelInfo } from './llama-runtime'
 import { registerAiAutocomplete } from './ai-autocomplete'
 import { destroyAutocompleteValidator, rankAutocompleteCandidates } from './ai-autocomplete-validator'
@@ -256,7 +248,7 @@ function renderTimingGutter() {
   const content = timingGutterContentEl
   content.textContent = ''
 
-  const show = !!lineTimings && currentSettings.lineTimings && currentSettings.lineNumbers
+  const show = currentSettings.lineTimings && currentSettings.lineNumbers && hasVisibleTimings()
   if (!show) {
     gutter.style.display = 'none'
     return
@@ -325,13 +317,22 @@ function renderTimingGutter() {
 }
 
 
-// Reaplica la opción de números de línea (pasa una función nueva para forzar el
-// re-render del gutter en Monaco).
+let lastAppliedLineNumbers: 'on' | 'off' | null = null
+let lastAppliedLineNumbersMinChars: number | null = null
+
+// Reaplica la opción de números de línea solo cuando realmente cambia, evitando
+// forzar un re-layout del editor en cada ejecución o pulsación de tecla.
 function refreshLineNumbers() {
-  editor?.updateOptions({
-    lineNumbers: currentSettings.lineNumbers ? 'on' : 'off',
-    lineNumbersMinChars: lineNumbersMinChars(),
-  })
+  const nextLineNumbers: 'on' | 'off' = currentSettings.lineNumbers ? 'on' : 'off'
+  const nextMinChars = lineNumbersMinChars()
+  if (editor && (nextLineNumbers !== lastAppliedLineNumbers || nextMinChars !== lastAppliedLineNumbersMinChars)) {
+    lastAppliedLineNumbers = nextLineNumbers
+    lastAppliedLineNumbersMinChars = nextMinChars
+    editor.updateOptions({
+      lineNumbers: nextLineNumbers,
+      lineNumbersMinChars: nextMinChars,
+    })
+  }
   scheduleTimingRender()
 }
 
@@ -400,6 +401,7 @@ let currentThemeData: EditorThemeData | null = null
 
 // Web Worker para ejecución de código con timeout
 let executorWorker: Worker | null = null
+let executorWorkerDirty = false
 let executionTimeoutId: number | null = null // Timer del hilo principal para timeout
 // Generación de ejecución en el navegador. La preparación de código es asíncrona
 // (worker), así que una ejecución puede quedar obsoleta si otra arranca mientras
@@ -409,7 +411,12 @@ let browserRunSeq = 0
 // Roots de React creados para respuestas del asistente. Los guardamos para poder
 // desmontarlos al limpiar la conversación o cerrar la app; si no, React retiene el
 // árbol montado (y sus efectos/recursos) indefinidamente.
-const chatResponseRoots = new Set<Root>()
+const chatResponseRoots = new Set<ChatResponseRoot>()
+let chatResponseModulePromise: Promise<typeof import('./ChatResponse')> | null = null
+
+function loadChatResponseModule() {
+  return (chatResponseModulePromise ??= import('./ChatResponse'))
+}
 
 function unmountChatResponseRoots() {
   for (const root of chatResponseRoots) {
@@ -1402,7 +1409,7 @@ function renderChatbotLoadingUI(
 
 // Reúne el código de todas las pestañas persistidas para sembrar el import map del LSP
 // en el arranque (así los imports ya presentes obtienen tipos sin recargar).
-function collectPersistedCode(): string {
+function collectPersistedCodeChunks(): string[] {
   const parts = [isShowcaseEmbed ? SHOWCASE_CODE : isAgentDemoEmbed ? AGENT_DEMO_FINAL_CODE : INITIAL_CODE]
   try {
     const raw = localStorage.getItem('xjs.tabs')
@@ -1415,7 +1422,18 @@ function collectPersistedCode(): string {
       }
     }
   } catch {}
-  return parts.join('\n')
+  return parts
+}
+
+async function collectSeedSpecifiers(): Promise<string[]> {
+  const chunks = collectPersistedCodeChunks().filter((chunk) => /\b(?:import|export)\b/.test(chunk))
+  if (chunks.length === 0) return []
+  const { collectBareSpecifiers } = await import('./console')
+  const found = new Set<string>()
+  for (const chunk of chunks) {
+    for (const specifier of collectBareSpecifiers(chunk)) found.add(specifier)
+  }
+  return [...found]
 }
 
 // Temas cargados (se conservan para poder re-configurar el LSP sin recargarlos).
@@ -1458,8 +1476,8 @@ declare module "${moduleName}" {
 }`
 }
 
-async function createMonacoWorkspace(): Promise<Workspace> {
-  const workspace = new Workspace({ name: `gojs-node-types-${NODE_TYPES_VERSION}-v2` })
+async function populateMonacoWorkspace(workspace: Workspace): Promise<Map<string, string>> {
+  const preloadedSources = new Map<string, string>()
   const directories = new Set<string>([NODE_TYPES_ROOT])
 
   for (const file of NODE_TYPES_FILES) {
@@ -1503,23 +1521,36 @@ async function createMonacoWorkspace(): Promise<Workspace> {
         source += `\n${getNodeDefaultImportDeclaration(file)}\n`
       }
 
+      preloadedSources.set(file, source)
       await workspace.fs.writeFile(workspacePath, source)
     }),
   )
 
-  return workspace
+  return preloadedSources
 }
 
-async function registerNodeTypeModels(workspace: Workspace) {
-  await Promise.all(
-    NODE_TYPES_FILES.map(async (file) => {
-      const uri = monaco.Uri.parse(`file:///${NODE_TYPES_ROOT}/${file}`)
-      if (monaco.editor.getModel(uri)) return
+const NODE_TYPE_MODEL_BATCH_SIZE = 16
 
-      const source = await workspace.fs.readTextFile(`${NODE_TYPES_ROOT}/${file}`)
-      monaco.editor.createModel(source, 'typescript', uri)
-    }),
-  )
+async function registerNodeTypeModels(workspace: Workspace, preloadedSources: Map<string, string>) {
+  for (let offset = 0; offset < NODE_TYPES_FILES.length; offset += NODE_TYPE_MODEL_BATCH_SIZE) {
+    if (teardownStarted || !monaco) return
+    const batch = NODE_TYPES_FILES.slice(offset, offset + NODE_TYPE_MODEL_BATCH_SIZE)
+    await Promise.all(
+      batch.map(async (file) => {
+        if (teardownStarted || !monaco) return
+        const uri = monaco.Uri.parse(`file:///${NODE_TYPES_ROOT}/${file}`)
+        if (monaco.editor.getModel(uri)) return
+
+        const source =
+          preloadedSources.get(file) ?? (await workspace.fs.readTextFile(`${NODE_TYPES_ROOT}/${file}`))
+        if (teardownStarted || !monaco || monaco.editor.getModel(uri)) return
+        monaco.editor.createModel(source, 'typescript', uri)
+      }),
+    )
+    if (offset + NODE_TYPE_MODEL_BATCH_SIZE < NODE_TYPES_FILES.length) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+  }
 }
 
 // Construye las opciones de `init()` con el import map derivado de los paquetes dados.
@@ -1541,7 +1572,8 @@ function buildMonacoInitOptions(specifiers: string[], workspace: Workspace) {
           // Tipos de Node.js (autocomplete de `process`, `fs`, `node:*`, etc.).
           // Usamos rutas del workspace porque modern-monaco solo descarga URLs
           // http(s), mientras que Tauri sirve los assets mediante su propio protocolo.
-          types: NODE_TYPES_FILES.map((file) => `${NODE_TYPES_ROOT}/${file}`),
+          // En embeds del landing omitimos los 83 ficheros de @types/node para acelerar el arranque.
+          types: isLandingEmbed ? [] : NODE_TYPES_FILES.map((file) => `${NODE_TYPES_ROOT}/${file}`),
           strict: true,
           // En un playground el `catch (error)` casual no debería marcar error: dejamos
           // la variable como `any` en vez de `unknown`.
@@ -1562,17 +1594,20 @@ function buildMonacoInitOptions(specifiers: string[], workspace: Workspace) {
 // Inicializar editor
 async function initEditor() {
   const editorElement = $('#editor')!
-  // Monaco mide la fuente al crearse. Si la medición usa la fuente de reserva y
-  // la definitiva llega después, todo el texto se recoloca (salto visible).
+  // Lanzar en paralelo la carga de la fuente, el tema activo, los specifiers de
+  // imports persistidos y la población del workspace de @types/node.
   const editorFontReady = loadEditorFont()
-  // Solo cargamos el tema ACTIVO en el arranque. Los demás se registran bajo
-  // demanda al seleccionarlos (changeTheme → defineTheme), así evitamos 8
-  // fetch + parse de JSON en el hilo principal durante el inicio.
-  loadedMonacoThemes = [await loadThemeData(currentSettings.theme)]
+  const workspace = new Workspace({ name: `gojs-node-types-${NODE_TYPES_VERSION}-v2` })
+  const nodeTypesPromise = isLandingEmbed ? null : populateMonacoWorkspace(workspace)
 
-  // Sembrar el import map del LSP con los paquetes ya importados en las pestañas.
-  const seedSpecifiers = collectBareSpecifiers(collectPersistedCode())
-  const workspace = await createMonacoWorkspace()
+  const [initialThemeData, seedSpecifiers, preloadedNodeTypes] = await Promise.all([
+    loadThemeData(currentSettings.theme),
+    collectSeedSpecifiers(),
+    nodeTypesPromise,
+  ])
+  loadedMonacoThemes = [initialThemeData]
+  currentThemeData = initialThemeData
+  applyThemeUiColors(currentSettings.theme, initialThemeData)
 
   // Inicializar Monaco con configuración manual
   monaco = await init(buildMonacoInitOptions(seedSpecifiers, workspace))
@@ -1580,7 +1615,6 @@ async function initEditor() {
   // activar JS/TS. Hay que envolver setTokensProvider aquí para que los
   // brackets dentro de comentarios no se coloricen (issue #27).
   patchBracketColorizationInComments(monaco)
-  await registerNodeTypeModels(workspace)
 
   // modern-monaco 0.4 incluye `< >` como par coloreable en JS/TS. Eso hace que
   // cada `>` de `=>` y de una comparación se marque como cierre inesperado,
@@ -1605,6 +1639,10 @@ async function initEditor() {
   const initialModel = createActiveTabModel(monaco)
 
   await editorFontReady
+  const initialLineNumbers: 'on' | 'off' = currentSettings.lineNumbers ? 'on' : 'off'
+  const initialMinChars = lineNumbersMinChars()
+  lastAppliedLineNumbers = initialLineNumbers
+  lastAppliedLineNumbersMinChars = initialMinChars
   editor = monaco.editor.create(editorElement, {
     model: initialModel,
     theme: currentSettings.theme,
@@ -1614,8 +1652,8 @@ async function initEditor() {
     minimap: {
       enabled: currentSettings.minimap,
     },
-    lineNumbers: currentSettings.lineNumbers ? 'on' : 'off',
-    lineNumbersMinChars: lineNumbersMinChars(),
+    lineNumbers: initialLineNumbers,
+    lineNumbersMinChars: initialMinChars,
     wordWrap: currentSettings.wordWrap ? 'on' : 'off',
     fontLigatures: currentSettings.fontLigatures,
     stickyScroll: {
@@ -1687,8 +1725,13 @@ async function initEditor() {
   setupSelectionContext()
   setupAiAutocomplete()
 
-  // Aplicar el tema inicial con la misma ruta que los cambios en settings.
-  await changeTheme(currentSettings.theme)
+  // Aplicar el tema inicial reutilizando los datos ya cargados y sin bloquear
+  // la inicialización de pestañas ni la primera ejecución con esperas de repintado.
+  await changeTheme(currentSettings.theme, {
+    preloadedThemeData: initialThemeData,
+    skipLayout: true,
+    deferColorSync: true,
+  })
 
   // Inicializar sistema de pestañas (tabs) y re-ejecutar al activar.
   // El modelo activo ya está en el editor; initTabs reutiliza el estado
@@ -1701,6 +1744,14 @@ async function initEditor() {
   // Inicializar el panel de historial de versiones
   initHistoryPanel()
   void revealWorkbench()
+
+  // Registrar los modelos de @types/node en segundo plano por lotes para no
+  // bloquear el montaje inicial del editor ni la primera ejecución.
+  if (preloadedNodeTypes) {
+    void registerNodeTypeModels(workspace, preloadedNodeTypes).catch((error) =>
+      console.warn('Could not register Node.js type models:', error),
+    )
+  }
 }
 
 const FONT_LOAD_TIMEOUT_MS = 1000
@@ -1804,27 +1855,49 @@ function syncThemeColors() {
     const editorDomNode = editor.getDomNode()
     if (!editorDomNode) return
 
-    // Buscar elementos con los tokens de Monaco para extraer sus colores
-    const getEditorTokenColor = (selector: string): string | null => {
-      // Crear un elemento temporal con el token de Monaco
-      const tempElement = document.createElement('span')
-      tempElement.className = selector
-      tempElement.style.position = 'absolute'
-      tempElement.style.visibility = 'hidden'
-      editorDomNode.appendChild(tempElement)
+    // Medir todos los tokens de Monaco necesarios en un único contenedor temporal
+    // para evitar múltiples reflows síncronos (appendChild + getComputedStyle + removeChild).
+    const tokenSelectors = ['mtk1', 'mtk3', 'mtk9', 'mtk12', 'mtk14'] as const
+    const tokenColorCache: Partial<Record<(typeof tokenSelectors)[number], string | null>> = {}
+    let tokenColorsMeasured = false
 
-      const color = window.getComputedStyle(tempElement).color
-      editorDomNode.removeChild(tempElement)
-
-      return color || null
+    const getEditorTokenColor = (selector: (typeof tokenSelectors)[number]): string | null => {
+      if (!tokenColorsMeasured) {
+        tokenColorsMeasured = true
+        const container = document.createElement('div')
+        container.style.position = 'absolute'
+        container.style.visibility = 'hidden'
+        container.style.pointerEvents = 'none'
+        const spans = tokenSelectors.map((sel) => {
+          const span = document.createElement('span')
+          span.className = sel
+          container.appendChild(span)
+          return [sel, span] as const
+        })
+        editorDomNode.appendChild(container)
+        for (const [sel, span] of spans) {
+          tokenColorCache[sel] = window.getComputedStyle(span).color || null
+        }
+        editorDomNode.removeChild(container)
+      }
+      return tokenColorCache[selector] ?? null
     }
 
-    const scoreScopeMatch = (scope: string, candidate: string) => {
-      const selectors = scope
-        .split(',')
-        .flatMap((part) => part.trim().split(/\s+/))
-        .filter(Boolean)
+    const parsedTokenRules = (currentThemeData?.tokenColors || []).map((rule) => {
+      const scopes = Array.isArray(rule.scope) ? rule.scope : rule.scope ? [rule.scope] : []
+      const parsedScopes = scopes.map((scope) =>
+        scope
+          .split(',')
+          .flatMap((part) => part.trim().split(/\s+/))
+          .filter(Boolean),
+      )
+      return {
+        parsedScopes,
+        foreground: rule.settings?.foreground,
+      }
+    })
 
+    const scoreSelectorsMatch = (selectors: string[], candidate: string) => {
       let bestScore = -1
 
       for (const selector of selectors) {
@@ -1846,25 +1919,24 @@ function syncThemeColors() {
       return bestScore
     }
 
-    const getThemeTokenColor = (candidates: string[], fallback: string): string => {
-      const tokenColors = currentThemeData?.tokenColors || []
+    const getThemeTokenColor = (candidates: string[], getFallback: () => string): string => {
       let bestMatch: { color: string; score: number } | null = null
 
       for (const candidate of candidates) {
-        for (const rule of tokenColors) {
-          const scopes = Array.isArray(rule.scope) ? rule.scope : rule.scope ? [rule.scope] : []
-          const score = scopes.reduce((best, scope) => Math.max(best, scoreScopeMatch(scope, candidate)), -1)
+        for (const rule of parsedTokenRules) {
+          if (!rule.foreground) continue
+          let score = -1
+          for (const selectors of rule.parsedScopes) {
+            score = Math.max(score, scoreSelectorsMatch(selectors, candidate))
+          }
 
-          if (score >= 0) {
-            const foreground = rule.settings?.foreground
-            if (foreground && (!bestMatch || score > bestMatch.score)) {
-              bestMatch = { color: foreground, score }
-            }
+          if (score >= 0 && (!bestMatch || score > bestMatch.score)) {
+            bestMatch = { color: rule.foreground, score }
           }
         }
       }
 
-      return bestMatch?.color || fallback
+      return bestMatch?.color || getFallback()
     }
 
     const themeColors = currentThemeData?.colors || {}
@@ -1878,36 +1950,40 @@ function syncThemeColors() {
       themeColors['editorLineNumber.foreground'] || consoleSecondaryColor || getEditorTokenColor('mtk1')
 
     // Mapear tokens de Monaco a variables CSS
-    const stringColor = getThemeTokenColor(['string'], getEditorTokenColor('mtk12') || '#ce9178')
-    const numberColor = getThemeTokenColor(['constant.numeric', 'constant'], getEditorTokenColor('mtk9') || '#b5cea8')
-    const keywordColor = getThemeTokenColor(['keyword', 'storage'], getEditorTokenColor('mtk9') || '#569cd6')
-    const commentColor = getThemeTokenColor(['comment'], getEditorTokenColor('mtk3') || '#6a9955')
+    const stringColor = getThemeTokenColor(['string'], () => getEditorTokenColor('mtk12') || '#ce9178')
+    const numberColor = getThemeTokenColor(
+      ['constant.numeric', 'constant'],
+      () => getEditorTokenColor('mtk9') || '#b5cea8',
+    )
+    const keywordColor = getThemeTokenColor(['keyword', 'storage'], () => getEditorTokenColor('mtk9') || '#569cd6')
+    const commentColor = getThemeTokenColor(['comment'], () => getEditorTokenColor('mtk3') || '#6a9955')
     const functionColor = getThemeTokenColor(
       ['entity.name.function', 'support.function', 'support'],
-      getEditorTokenColor('mtk12') || '#dcdcaa',
+      () => getEditorTokenColor('mtk12') || '#dcdcaa',
     )
     const booleanColor = getThemeTokenColor(
       ['constant.language.boolean', 'constant.language', 'keyword'],
-      getEditorTokenColor('mtk9') || '#569cd6',
+      () => getEditorTokenColor('mtk9') || '#569cd6',
     )
     const propertyColor = getThemeTokenColor(
       ['meta.property-name', 'support.type.property-name', 'variable.object.property', 'support'],
-      functionColor,
+      () => functionColor,
     )
     const mtk14Color = getEditorTokenColor('mtk14') || '#4fc3f7' // mtk14 token color for chatbot
 
     // Establecer variables CSS
-    document.documentElement.style.setProperty('--console-text-primary', editorForeground || '#e4e4e4')
-    document.documentElement.style.setProperty('--console-text-secondary', consoleSecondaryColor || '#a0a0a0')
-    document.documentElement.style.setProperty('--editor-line-number-foreground', lineNumberColor || '#858585')
-    document.documentElement.style.setProperty('--theme-string', stringColor)
-    document.documentElement.style.setProperty('--theme-number', numberColor)
-    document.documentElement.style.setProperty('--theme-keyword', keywordColor)
-    document.documentElement.style.setProperty('--theme-comment', commentColor)
-    document.documentElement.style.setProperty('--theme-function', functionColor)
-    document.documentElement.style.setProperty('--theme-boolean', booleanColor)
-    document.documentElement.style.setProperty('--theme-property', propertyColor)
-    document.documentElement.style.setProperty('--theme-mtk14', mtk14Color)
+    const rootStyle = document.documentElement.style
+    rootStyle.setProperty('--console-text-primary', editorForeground || '#e4e4e4')
+    rootStyle.setProperty('--console-text-secondary', consoleSecondaryColor || '#a0a0a0')
+    rootStyle.setProperty('--editor-line-number-foreground', lineNumberColor || '#858585')
+    rootStyle.setProperty('--theme-string', stringColor)
+    rootStyle.setProperty('--theme-number', numberColor)
+    rootStyle.setProperty('--theme-keyword', keywordColor)
+    rootStyle.setProperty('--theme-comment', commentColor)
+    rootStyle.setProperty('--theme-function', functionColor)
+    rootStyle.setProperty('--theme-boolean', booleanColor)
+    rootStyle.setProperty('--theme-property', propertyColor)
+    rootStyle.setProperty('--theme-mtk14', mtk14Color)
   } catch (error) {
     console.error('Error al sincronizar colores del tema:', error)
   }
@@ -2111,14 +2187,19 @@ const themeImports: Record<Theme, () => Promise<any>> = {
   'one-dark-pro': () => import('tm-themes/themes/one-dark-pro.json'),
 }
 
+const themeDataCache = new Map<Theme, Promise<EditorThemeData & { name: string }>>()
+
 function isAvailableTheme(themeName: string): themeName is Theme {
   return themeName in themeImports
 }
 
-async function loadThemeData(themeName: Theme): Promise<EditorThemeData & { name: string }> {
+function loadThemeData(themeName: Theme): Promise<EditorThemeData & { name: string }> {
+  const cached = themeDataCache.get(themeName)
+  if (cached) return cached
   const themeLoader = themeImports[themeName]
-  const themeModule = await themeLoader()
-  return (themeModule.default || themeModule) as EditorThemeData & { name: string }
+  const promise = themeLoader().then((themeModule) => (themeModule.default || themeModule) as EditorThemeData & { name: string })
+  themeDataCache.set(themeName, promise)
+  return promise
 }
 
 function buildMonacoTheme(themeName: Theme, themeData: EditorThemeData) {
@@ -2152,7 +2233,14 @@ function buildMonacoTheme(themeName: Theme, themeData: EditorThemeData) {
 let themeChangeRequestId = 0
 
 // Cargar y aplicar un tema dinámicamente desde tm-themes
-async function changeTheme(themeName: Theme): Promise<boolean> {
+async function changeTheme(
+  themeName: Theme,
+  options?: {
+    preloadedThemeData?: EditorThemeData & { name: string }
+    skipLayout?: boolean
+    deferColorSync?: boolean
+  },
+): Promise<boolean> {
   if (!editor || !monaco) {
     console.error('Editor not initialized', { editor: !!editor, monaco: !!monaco })
     return false
@@ -2169,7 +2257,7 @@ async function changeTheme(themeName: Theme): Promise<boolean> {
       throw new Error(`Theme "${themeName}" not found in theme imports`)
     }
 
-    const themeData = await loadThemeData(themeName)
+    const themeData = options?.preloadedThemeData ?? (await loadThemeData(themeName))
     if (requestId !== themeChangeRequestId) return false
 
     currentThemeData = themeData
@@ -2194,8 +2282,26 @@ async function changeTheme(themeName: Theme): Promise<boolean> {
       return false
     }
 
-    // Forzar actualización
-    editor.layout()
+    // Forzar actualización cuando sea necesario
+    if (!options?.skipLayout) {
+      editor.layout()
+    }
+
+    if (options?.deferColorSync) {
+      // Sincronizar colores inmediatamente a partir de themeData sin bloquear el arranque,
+      // y refrescar tras el siguiente pintado cuando Monaco haya inyectado sus clases mtk*.
+      syncEditorBackground()
+      syncThemeColors()
+      saveThemePaletteCache()
+      void waitForNextPaint().then(() => {
+        if (requestId !== themeChangeRequestId) return
+        syncEditorBackground()
+        syncThemeColors()
+        saveThemePaletteCache()
+      })
+      console.log('Theme applied successfully:', themeName)
+      return true
+    }
 
     // Sincronizar background
     await waitForNextPaint()
@@ -2465,8 +2571,9 @@ function initExecutorWorker() {
     executorWorker.terminate()
   }
 
-  // Crear nuevo worker
+  // Crear nuevo worker limpio
   executorWorker = new ExecutorWorker()
+  executorWorkerDirty = false
 }
 
 function teardownApp() {
@@ -2930,18 +3037,26 @@ const LOG_TYPE_ICON_PATHS: Record<string, string> = {
   timeout: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8M8 11.5h.01"/>',
 }
 
+const logTypeIconTemplates = new Map<string, HTMLSpanElement>()
+
 function createLogTypeIcon(type: string, label = type): HTMLSpanElement | null {
   const paths = LOG_TYPE_ICON_PATHS[type]
   if (!paths) return null
 
-  const icon = document.createElement('span')
-  icon.className = 'log-type-icon'
-  icon.dataset.type = type
-  icon.setAttribute('role', 'img')
-  icon.setAttribute('aria-label', label)
-  icon.title = label
-  icon.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${paths}</svg>`
-  return icon
+  const cacheKey = `${type}:${label}`
+  let template = logTypeIconTemplates.get(cacheKey)
+  if (!template) {
+    template = document.createElement('span')
+    template.className = 'log-type-icon'
+    template.dataset.type = type
+    template.setAttribute('role', 'img')
+    template.setAttribute('aria-label', label)
+    template.title = label
+    template.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${paths}</svg>`
+    logTypeIconTemplates.set(cacheKey, template)
+  }
+
+  return template.cloneNode(true) as HTMLSpanElement
 }
 
 // Un worker de ejecución no pudo cargar. En la web casi siempre es una pestaña
@@ -3201,11 +3316,14 @@ async function runCode({ force = false }: { force?: boolean } = {}) {
     const modifiedCode = prepared.code
     const lineMapObj = prepared.lineMap
 
-    // Recrear siempre el worker para cada ejecución. Así garantizamos un contexto
-    // limpio y, sobre todo, matamos cualquier callback asíncrono (timers, promesas)
-    // de una ejecución anterior que, de lo contrario, escribiría logs duplicados
-    // en la salida ya limpiada (ver issue #16).
-    initExecutorWorker()
+    // Usar un worker limpio para cada ejecución. Si ya existe uno recién creado
+    // que aún no ha ejecutado código (p. ej. precalentado en el arranque), lo
+    // reutilizamos directamente; si ya se usó, lo recreamos para matar cualquier
+    // callback asíncrono (timers, promesas) de la ejecución anterior (issue #16).
+    if (!executorWorker || executorWorkerDirty) {
+      initExecutorWorker()
+    }
+    executorWorkerDirty = true
 
     const runWorker = executorWorker!
     let runStartedAt = 0
@@ -3380,10 +3498,31 @@ type AddLogFn = (
   columns?: string[],
 ) => void
 
+let nativeConsoleToolsPromise: Promise<{
+  transpileToJs: typeof import('./console').transpileToJs
+  injectNativeExpressionLogging: typeof import('./native-console').injectNativeExpressionLogging
+  instrumentNodeCode: typeof import('./native-console').instrumentNodeCode
+  parseNativeLogLine: typeof import('./native-console').parseNativeLogLine
+}> | null = null
+
+function loadNativeConsoleTools() {
+  return (nativeConsoleToolsPromise ??= Promise.all([import('./console'), import('./native-console')]).then(
+    ([consoleMod, nativeConsoleMod]) => ({
+      transpileToJs: consoleMod.transpileToJs,
+      injectNativeExpressionLogging: nativeConsoleMod.injectNativeExpressionLogging,
+      instrumentNodeCode: nativeConsoleMod.instrumentNodeCode,
+      parseNativeLogLine: nativeConsoleMod.parseNativeLogLine,
+    }),
+  ))
+}
+
 async function runCodeNative(code: string, addLog: AddLogFn) {
   // Reclamar el turno de ejecución. Cualquier ejecución nativa anterior queda
   // superada: su listener dejará de pintar en cuanto vea que ya no es la última.
   const runId = ++nativeRunSeq
+
+  const { transpileToJs, injectNativeExpressionLogging, instrumentNodeCode, parseNativeLogLine } =
+    await loadNativeConsoleTools()
 
   // Transpilar TS → JS (solo type-stripping) manteniendo los imports intactos,
   // para que `import x from 'pkg'` resuelva desde el node_modules del workspace
@@ -4250,13 +4389,23 @@ async function initAgentDemo(): Promise<void> {
 async function start() {
   window.addEventListener('pagehide', teardownApp, { once: true })
 
-  // Prettier se carga bajo demanda en la primera llamada a formatCode()
+  // Prettier se carga bajo demanda en la primera llamada a formatCode().
+  // Los workers de preparación y ejecución se precalientan en paralelo mientras
+  // Monaco arranca, eliminando la espera de creación de workers en el primer run.
+  if (autoRunEnabled && currentSettings.runtime !== 'node') {
+    warmupCodePrepWorker()
+    initExecutorWorker()
+  }
+
+  const promptApiAvailabilityPromise = !isLandingEmbed
+    ? refreshChromePromptApiModelAvailability()
+    : Promise.resolve()
 
   await initEditor()
   void initShowcaseTyping()
   void initAgentDemo()
   if (!isLandingEmbed) {
-    await refreshChromePromptApiModelAvailability()
+    await promptApiAvailabilityPromise
     enableChromePromptApiAssistantIfAvailable()
   }
 
@@ -5536,7 +5685,7 @@ async function initChatbot() {
     }
 
     // Pinta la respuesta final del asistente como markdown (reutiliza ChatResponse)
-    const renderAssistantMarkdown = (markdown: string) => {
+    const renderAssistantMarkdown = async (markdown: string) => {
       finalizeRunGroup()
 
       const assistantMessageDiv = document.createElement('div')
@@ -5575,19 +5724,17 @@ async function initChatbot() {
 
       chatbotMessages?.appendChild(assistantMessageDiv)
 
-      const reactRoot = createRoot(contentDiv)
+      const { mountChatResponse } = await loadChatResponseModule()
+      const reactRoot = mountChatResponse(contentDiv, {
+        content: markdown,
+        isStreaming: false,
+        monaco,
+        theme: currentSettings.theme,
+        fontFamily: getEditorFontFamilyStack(),
+        fontSize: currentSettings.fontSize,
+        lineHeight: calculateLineHeight(currentSettings.fontSize),
+      })
       chatResponseRoots.add(reactRoot)
-      reactRoot.render(
-        React.createElement(ChatResponse, {
-          content: markdown,
-          isStreaming: false,
-          monaco,
-          theme: currentSettings.theme,
-          fontFamily: getEditorFontFamilyStack(),
-          fontSize: currentSettings.fontSize,
-          lineHeight: calculateLineHeight(currentSettings.fontSize),
-        }),
-      )
       syncChatbotClearVisibility()
       updateChatEmptyState()
       chatbotMessages?.scrollTo(0, chatbotMessages.scrollHeight)
@@ -5604,8 +5751,11 @@ async function initChatbot() {
     }
 
     let finalMarkdown: string | null = null
+    let renderMarkdownPromise: Promise<void> | null = null
 
     try {
+      void loadChatResponseModule()
+      const { runAgent } = await import('./agent/agent')
       // La selección va como contexto aparte: así no cuenta para detectar si el
       // usuario pide un cambio o hace una pregunta.
       await runAgent(item.message, {
@@ -5621,10 +5771,13 @@ async function initChatbot() {
           run: renderAgentRun,
           finalAnswer: (markdown) => {
             finalMarkdown = markdown
-            renderAssistantMarkdown(markdown)
+            renderMarkdownPromise = renderAssistantMarkdown(markdown)
           },
         },
       })
+      if (renderMarkdownPromise) {
+        await renderMarkdownPromise
+      }
       if (finalMarkdown) {
         agentHistory = [...agentHistory, { user: item.message, assistant: finalMarkdown }].slice(-AGENT_HISTORY_LIMIT)
       }

@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { Streamdown, useIsCodeFenceIncomplete } from 'streamdown'
 
-interface ChatResponseProps {
+export type ChatResponseRoot = Pick<Root, 'unmount'>
+
+export interface ChatResponseProps {
   content: string
   isStreaming: boolean
   monaco: any
@@ -214,4 +217,10 @@ export const ChatResponse: React.FC<ChatResponseProps> = ({
       </Streamdown>
     </div>
   )
+}
+
+export function mountChatResponse(container: HTMLElement, props: ChatResponseProps): ChatResponseRoot {
+  const root = createRoot(container)
+  root.render(<ChatResponse {...props} />)
+  return root
 }

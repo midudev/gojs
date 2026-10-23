@@ -98,25 +98,42 @@ function initHeroField(): void {
     pixelSize: 4,
     onResize: measure,
     sample: (x, y, time) => {
-      const distance = distanceToBox(x, y, windowBox)
-      if (distance === 0) return 0
+      const dx = Math.max(windowBox.left - x, 0, x - windowBox.right)
+      const dy = Math.max(windowBox.top - y, 0, y - windowBox.bottom)
+      if ((dx === 0 && dy === 0) || dx >= 173 || dy >= 173) return 0
+      const distance = Math.hypot(dx, dy)
+      if (distance >= 172.8) return 0
+
+      const pointerDx = x - pointer.x
+      const pointerDy = y - pointer.y
+      const pointerDistSq = pointerDx * pointerDx + pointerDy * pointerDy
+      // When pointer is far away (near ≈ 0), max possible reach is 72 * 1.6 = 115.2.
+      if (pointerDistSq > 140000 && distance >= 115.3) return 0
+
+      const near = pointerDistSq > 180000 ? 0 : Math.exp(-pointerDistSq / 20000)
       const drift = Math.sin(x * 0.006 + time * 0.5) * Math.cos(y * 0.008 - time * 0.4)
       const ripple = Math.sin(x * 0.021 - time * 1.1) * Math.sin(y * 0.019 + time * 0.9)
-      const near = Math.exp(-((x - pointer.x) ** 2 + (y - pointer.y) ** 2) / 20000)
       const reach = 72 * (1 + 0.4 * drift + 0.2 * ripple + 0.8 * near)
       const falloff = 1 - distance / reach
       if (falloff <= 0) return 0
       let clearance = 1
       for (const box of clearBoxes) clearance = Math.min(clearance, distanceToBox(x, y, box) / 48)
       // Mostly a faint blue haze; the pointer heats it up to yellow.
-      return falloff ** 2 * (0.42 + 0.12 * drift + 0.5 * near) * clearance
+      return falloff * falloff * (0.42 + 0.12 * drift + 0.5 * near) * clearance
     },
   })
 
-  new ResizeObserver(() => {
+  const resizeObserver = new ResizeObserver(() => {
     field.resize()
     field.render(0)
-  }).observe(container)
+  })
+  resizeObserver.observe(container)
+  resizeObserver.observe(frame)
+  for (const element of keepOut) resizeObserver.observe(element)
+  void document.fonts?.ready?.then(() => {
+    measure()
+    field.render(0)
+  })
 
   if (!motion) {
     field.render(0)
@@ -138,7 +155,6 @@ function initHeroField(): void {
   })
 
   runWhileVisible(container, (time) => {
-    measure()
     field.render(time)
   })
 }
@@ -239,16 +255,18 @@ function initSunrise(): void {
   const pointer = { x: 0, y: 0, active: false }
   const light = { x: 0, y: 0 }
   // Sun geometry, recomputed once per frame instead of once per cell.
-  const sun = { radius: 0, centerY: 0, lightAngle: 0, lightDistance: 0 }
+  const sun = { radius: 0, centerY: 0, lightAngle: 0, lightDistance: 0, rayLength: 0 }
   const updateSun = (time: number) => {
     sun.radius = Math.min(width * 0.16, 150) * (1 + 0.22 * flare + 0.02 * Math.sin(time * 2))
     sun.centerY = height + sun.radius * 1.35 - progress * sun.radius * (1.1 + 0.15 * glow)
     sun.lightAngle = Math.atan2(light.y - sun.centerY, light.x - sunX)
     sun.lightDistance = Math.hypot(light.x - sunX, light.y - sun.centerY)
+    sun.rayLength = sun.radius * (2.2 + 1.4 * flare)
   }
   const ripples: { x: number; y: number; start: number }[] = []
   const RIPPLE_LIFE = 1.4
   const RIPPLE_SPEED = 460
+  const TWO_PI = Math.PI * 2
 
   const field = createDitherField({
     canvas,
@@ -260,7 +278,7 @@ function initSunrise(): void {
       sunX ||= width / 2
     },
     sample: (x, y, time) => {
-      const { radius, centerY } = sun
+      const { radius, centerY, rayLength } = sun
       const dx = x - sunX
       const dy = y - centerY
       const distance = Math.hypot(dx, dy)
@@ -268,27 +286,44 @@ function initSunrise(): void {
       if (distance < radius - rim) return 1
       if (distance < radius) return 0.55 + (0.45 * (radius - distance)) / rim
 
-      const angle = Math.atan2(dy, dx)
       const outside = distance - radius
-      const reach = radius * (0.5 + 0.08 * Math.sin(angle * 7 + time * 1.2) + 0.6 * flare)
-      const halo = Math.max(0, 1 - outside / reach)
-      let value = 0.4 * halo * halo
+      let value = 0
 
-      const rayLength = radius * (2.2 + 1.4 * flare)
-      if (outside < rayLength) {
-        const ray = Math.max(0, Math.sin(angle * 12 + time * 0.4)) ** 8
-        value = Math.max(value, ray * (0.3 + 0.3 * flare) * (1 - outside / rayLength))
-      }
-
-      if (glow > 0.01) {
-        const along = outside / Math.max(sun.lightDistance - radius + 80, 1)
-        if (along < 1) {
-          const delta = Math.atan2(Math.sin(angle - sun.lightAngle), Math.cos(angle - sun.lightAngle))
-          const beam = Math.exp(-((delta / 0.075) ** 2)) * (1 - along) ** 0.6
-          value = Math.max(value, 0.62 * glow * beam)
+      if (outside < rayLength || glow > 0.01) {
+        const angle = Math.atan2(dy, dx)
+        if (outside < rayLength) {
+          const reach = radius * (0.5 + 0.08 * Math.sin(angle * 7 + time * 1.2) + 0.6 * flare)
+          if (outside < reach) {
+            const halo = 1 - outside / reach
+            value = 0.4 * halo * halo
+          }
+          const raySin = Math.sin(angle * 12 + time * 0.4)
+          if (raySin > 0) {
+            const r2 = raySin * raySin
+            const r4 = r2 * r2
+            const ray = r4 * r4
+            value = Math.max(value, ray * (0.3 + 0.3 * flare) * (1 - outside / rayLength))
+          }
         }
-        const spot = Math.exp(-((x - light.x) ** 2 + (y - light.y) ** 2) / 6000)
-        value = Math.max(value, 0.48 * glow * spot)
+
+        if (glow > 0.01) {
+          const along = outside / Math.max(sun.lightDistance - radius + 80, 1)
+          if (along < 1) {
+            let delta = angle - sun.lightAngle
+            if (delta > Math.PI) delta -= TWO_PI
+            else if (delta < -Math.PI) delta += TWO_PI
+            const normDelta = delta / 0.075
+            const beam = Math.exp(-(normDelta * normDelta)) * (1 - along) ** 0.6
+            value = Math.max(value, 0.62 * glow * beam)
+          }
+          const spotDx = x - light.x
+          const spotDy = y - light.y
+          const spotDistSq = spotDx * spotDx + spotDy * spotDy
+          if (spotDistSq < 42000) {
+            const spot = Math.exp(-spotDistSq / 6000)
+            value = Math.max(value, 0.48 * glow * spot)
+          }
+        }
       }
 
       for (const ripple of ripples) {

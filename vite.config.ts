@@ -17,6 +17,7 @@ if (typeof ts.createLanguageService !== 'function') {
 }
 
 const MODERN_MONACO_DIST = dirname(fileURLToPath(import.meta.resolve('modern-monaco')))
+const MODERN_MONACO_INDEX_PATH = join(MODERN_MONACO_DIST, 'index.mjs')
 const MODERN_MONACO_FILES = [
   'cache.mjs',
   'editor-core.mjs',
@@ -49,6 +50,17 @@ function readModernMonacoAsset(relativePath: (typeof MODERN_MONACO_FILES)[number
 function modernMonacoAssets(): Plugin {
   return {
     name: 'modern-monaco-assets',
+    load(id) {
+      if (id.split('?', 1)[0] !== MODERN_MONACO_INDEX_PATH) return null
+      // GoJS maps jsx -> javascript and tsx -> typescript, so the 450 KB of
+      // standalone jsx/tsx TextMate grammars in modern-monaco are never used.
+      return readFileSync(MODERN_MONACO_INDEX_PATH, 'utf8')
+        .replace(
+          /\/\/ node_modules\/tm-grammars\/grammars\/jsx\.json[\s\S]*?(?=\/\/ node_modules\/tm-grammars\/grammars\/json\.json)/,
+          '',
+        )
+        .replace(/\b(?:jsx_default|tsx_default),\s*/g, '')
+    },
     configureServer(server) {
       server.middlewares.use(
         (

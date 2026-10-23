@@ -11,12 +11,15 @@ import {
   transpileToJs,
   collectNodeBuiltinImports,
   transformImports,
-  wrapConsoleCallbacks,
-  instrumentConsoleLineNumbers,
+  instrumentConsole,
   injectExpressionLogging,
   lineMap,
 } from './console'
 import { injectTimings } from './timings'
+
+// Pre-cargar Sucrase en cuanto arranca el worker para que la primera ejecución
+// no espere al import() dinámico en la ruta crítica.
+void transpileToJs('')
 
 export interface PrepareRequest {
   type: 'prepare'
@@ -65,12 +68,9 @@ self.onmessage = async (e: MessageEvent<PrepareRequest>) => {
     // 3. imports estáticos -> import() dinámicos
     const codeWithImports = transformImports(jsCode)
 
-    // 4. Envolver métodos de console usados como callbacks para conservar su línea.
-    const codeWithConsoleCallbacks = wrapConsoleCallbacks(codeWithImports)
-
-    // 5. Fijar explícitamente la línea de cada llamada a console. En WKWebView,
-    //    Error.stack puede omitir el frame del código evaluado.
-    const codeWithConsoleLines = instrumentConsoleLineNumbers(codeWithConsoleCallbacks)
+    // 4. Envolver callbacks de console y fijar explícitamente la línea de cada
+    //    llamada en una sola pasada de AST.
+    const codeWithConsoleLines = instrumentConsole(codeWithImports)
 
     // 6. instrumentación de tiempos (antes del logging de expresiones para que su
     //    lineMap siga siendo correcto)
