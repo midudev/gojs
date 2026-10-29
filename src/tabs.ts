@@ -9,11 +9,13 @@ import { clearHistory } from './history'
 
 type MonacoLike = any
 type EditorLike = any
+type EditorLanguage = 'typescript' | 'javascript'
 
 type Tab = {
   id: string
   name?: string // Nombre personalizado de la pestaña
   content: string
+  language?: EditorLanguage
   isDirty: boolean
   createdAt: number
   updatedAt: number
@@ -109,10 +111,15 @@ export function flushTabsState() {
   flushSaveState()
 }
 
+function getTabLanguage(tab: Tab): EditorLanguage {
+  return tab.language === 'javascript' ? 'javascript' : 'typescript'
+}
+
 function createModelForTab(t: Tab) {
   if (!monaco) return
-  const uri = monaco.Uri.parse(`inmemory://models/${t.id}.ts`)
-  t.model = monaco.editor.createModel(t.content, 'typescript', uri)
+  const language = getTabLanguage(t)
+  const uri = monaco.Uri.parse(`inmemory://models/${t.id}.${language === 'javascript' ? 'js' : 'ts'}`)
+  t.model = monaco.editor.createModel(t.content, language, uri)
 }
 
 function ensureAtLeastOneTab() {
@@ -163,6 +170,7 @@ function render() {
     const tabEl = document.createElement('div')
     tabEl.className = 'tab-item' + (t.id === state.activeId ? ' active' : '')
     tabEl.dataset.tabId = t.id
+    tabEl.dataset.language = getTabLanguage(t)
     tabEl.title = getTabTitle(t)
     tabEl.setAttribute('role', 'tab')
     tabEl.setAttribute('aria-label', getTabTitle(t))
@@ -301,6 +309,20 @@ function setActiveModel() {
   if (!active) return
   if (!active.model) createModelForTab(active)
   if (active.model) editor.setModel(active.model)
+  syncLanguageSelector()
+}
+
+export function setActiveTabLanguage(language: EditorLanguage) {
+  if (!editor || !monaco) return
+  const active = state.tabs.find((tab) => tab.id === state.activeId)
+  if (!active || getTabLanguage(active) === language) return
+  // Conservar el modelo mantiene el texto, el cursor y el historial de deshacer.
+  // El adaptador del worker sincroniza este modo con el analizador de sintaxis.
+  if (active.model) monaco.editor.setModelLanguage(active.model, language)
+  active.language = language
+  setActiveModel()
+  render()
+  flushSaveState()
 }
 
 export function newTab() {
@@ -438,6 +460,78 @@ export function createActiveTabModel(monacoInstance: MonacoLike) {
   return active.model
 }
 
+function syncLanguageSelector() {
+  const selector = document.querySelector<HTMLButtonElement>('#status-language')
+  const active = state.tabs.find((tab) => tab.id === state.activeId)
+  if (!selector || !active) return
+  const language = getTabLanguage(active)
+  selector.textContent = language === 'javascript' ? 'JavaScript' : 'TypeScript'
+  selector.setAttribute('aria-label', `Editor language: ${selector.textContent}`)
+  document.querySelectorAll<HTMLElement>('#status-language-menu [data-language]').forEach((option) => {
+    option.setAttribute('aria-checked', String(option.dataset.language === language))
+  })
+}
+
+function initLanguageSelector() {
+  const trigger = document.querySelector<HTMLButtonElement>('#status-language')
+  const menu = document.querySelector<HTMLElement>('#status-language-menu')
+  if (!trigger || !menu) return
+  const options = Array.from(menu.querySelectorAll<HTMLButtonElement>('[data-language]'))
+
+  const closeMenu = () => {
+    menu.hidePopover()
+    trigger.focus()
+  }
+
+  const positionMenu = () => {
+    const bounds = trigger.getBoundingClientRect()
+    menu.style.right = `${window.innerWidth - bounds.right}px`
+    menu.style.bottom = `${window.innerHeight - bounds.top}px`
+    menu.style.minWidth = `${bounds.width}px`
+  }
+  menu.addEventListener('beforetoggle', (event) => {
+    const open = (event as ToggleEvent).newState === 'open'
+    trigger.setAttribute('aria-expanded', String(open))
+    if (open) positionMenu()
+  })
+  menu.addEventListener('toggle', () => {
+    if (menu.matches(':popover-open') && !menu.contains(document.activeElement)) {
+      options.find((option) => option.getAttribute('aria-checked') === 'true')?.focus()
+    }
+  })
+  options.forEach((option) => {
+    option.addEventListener('click', () => {
+      const language = option.dataset.language
+      if (language === 'typescript' || language === 'javascript') setActiveTabLanguage(language)
+      closeMenu()
+    })
+  })
+  trigger.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      menu.showPopover()
+    }
+  })
+  menu.addEventListener('keydown', (event) => {
+    const index = options.indexOf(document.activeElement as HTMLButtonElement)
+    let next = index
+    if (event.key === 'ArrowDown') next = (index + 1) % options.length
+    else if (event.key === 'ArrowUp') next = (index - 1 + options.length) % options.length
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = options.length - 1
+    else if (event.key === 'Escape' || event.key === 'Tab') {
+      closeMenu()
+      if (event.key === 'Escape') event.preventDefault()
+      return
+    } else return
+    event.preventDefault()
+    options[next]?.focus()
+  })
+  window.addEventListener('resize', () => {
+    if (menu.matches(':popover-open')) positionMenu()
+  })
+}
+
 export function initTabs(editorInstance: EditorLike, monacoInstance: MonacoLike, onActivated?: () => void) {
   editor = editorInstance
   monaco = monacoInstance
@@ -450,6 +544,8 @@ export function initTabs(editorInstance: EditorLike, monacoInstance: MonacoLike,
   setActiveModel()
   // Ejecutar callback inicial para sincronizar salida con la pestaña activa
   onTabActivated?.()
+
+  initLanguageSelector()
 
   // Atajos a nivel de editor (solo cuando tiene foco)
   if (editor && monaco) {

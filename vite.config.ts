@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildSync } from 'esbuild'
 import ts from 'typescript'
+import { patchLanguageSetup, patchLanguageWorker } from './scripts/monaco-language-mode.mjs'
 
 // El worker LSP de modern-monaco hace `import ts from "typescript"` y llama a
 // `createLanguageService`. TypeScript 7+ es nativo y ya no exporta esa API, así
@@ -32,7 +33,12 @@ const MODERN_MONACO_FILES = [
 
 const TYPESCRIPT_WORKER_PATH = 'lsp/typescript/worker.mjs'
 const TYPESCRIPT_WORKER_SOURCE = buildSync({
-  entryPoints: [join(MODERN_MONACO_DIST, TYPESCRIPT_WORKER_PATH)],
+  stdin: {
+    contents: patchLanguageWorker(readFileSync(join(MODERN_MONACO_DIST, TYPESCRIPT_WORKER_PATH), 'utf8')),
+    resolveDir: join(MODERN_MONACO_DIST, 'lsp/typescript'),
+    sourcefile: 'worker.mjs',
+    loader: 'js',
+  },
   bundle: true,
   format: 'esm',
   platform: 'browser',
@@ -42,6 +48,9 @@ const TYPESCRIPT_WORKER_SOURCE = buildSync({
 }).outputFiles[0].contents
 
 function readModernMonacoAsset(relativePath: (typeof MODERN_MONACO_FILES)[number]) {
+  if (relativePath === 'lsp/typescript/setup.mjs') {
+    return patchLanguageSetup(readFileSync(join(MODERN_MONACO_DIST, relativePath), 'utf8'))
+  }
   return relativePath === TYPESCRIPT_WORKER_PATH
     ? TYPESCRIPT_WORKER_SOURCE
     : readFileSync(join(MODERN_MONACO_DIST, relativePath))
