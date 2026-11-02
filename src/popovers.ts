@@ -5,6 +5,7 @@ export function initHeaderPopovers() {
   const settingsButton = document.getElementById('settings-button') as HTMLElement | null
   const issueButton = document.getElementById('issue-button') as HTMLElement | null
   const historyButton = document.getElementById('history-button') as HTMLElement | null
+  const languageButton = document.getElementById('status-language') as HTMLElement | null
 
   const tooltipAutorun = document.getElementById('tooltip-autorun') as HTMLElement | null
   const tooltipAI = document.getElementById('tooltip-ai') as HTMLElement | null
@@ -12,6 +13,7 @@ export function initHeaderPopovers() {
   const tooltipSettings = document.getElementById('tooltip-settings') as HTMLElement | null
   const tooltipIssue = document.getElementById('tooltip-issue') as HTMLElement | null
   const tooltipHistory = document.getElementById('tooltip-history') as HTMLElement | null
+  const tooltipLanguage = document.getElementById('tooltip-language') as HTMLElement | null
 
   const attachHintTooltip = (button: HTMLElement | null, tooltip: HTMLElement | null) => {
     if (!button || !tooltip) return
@@ -47,10 +49,15 @@ export function initHeaderPopovers() {
       centerX = Math.max(margin + halfWidth, Math.min(centerX, window.innerWidth - margin - halfWidth))
 
       tooltip.style.left = `${centerX}px`
-      tooltip.style.top = `${btnRect.bottom + 6}px`
+      // En la barra inferior, mostrar el tooltip encima para que quede visible.
+      tooltip.style.top = button.closest('.status-bar')
+        ? `${btnRect.top - 6 - tipRect.height}px`
+        : `${btnRect.bottom + 6}px`
     }
 
     const show = () => {
+      // No tapar las opciones de un menú abierto con el tooltip de su botón.
+      if (button.getAttribute('aria-haspopup') === 'menu' && button.getAttribute('aria-expanded') === 'true') return
       try {
         // showPopover() sin argumentos: la variante con { source } es muy reciente y
         // no está disponible en todos los navegadores.
@@ -72,6 +79,7 @@ export function initHeaderPopovers() {
     button.addEventListener('mouseout', hide)
     button.addEventListener('focus', show)
     button.addEventListener('blur', hide)
+    button.addEventListener('click', hide)
 
     const reposition = () => {
       if (tooltip.matches(':popover-open')) position()
@@ -86,4 +94,5 @@ export function initHeaderPopovers() {
   attachHintTooltip(settingsButton, tooltipSettings)
   attachHintTooltip(issueButton, tooltipIssue)
   attachHintTooltip(historyButton, tooltipHistory)
+  attachHintTooltip(languageButton, tooltipLanguage)
 }

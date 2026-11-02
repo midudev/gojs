@@ -730,7 +730,14 @@ packageJson.name</code></pre>
       </div>
       <div class="status-bar-group">
         <span id="status-cursor" class="status-item">Ln 1, Col 1</span>
-        <span class="status-item">TypeScript</span>
+        <button id="status-language" class="status-item status-language" type="button"
+          aria-label="Editor language: TypeScript" aria-haspopup="menu" aria-expanded="false"
+          aria-controls="status-language-menu" popovertarget="status-language-menu"
+          aria-describedby="tooltip-language" disabled>TypeScript</button>
+        <div id="status-language-menu" class="status-language-menu" popover="auto" role="menu" aria-label="Editor language">
+          <button type="button" role="menuitemradio" aria-checked="true" data-language="typescript" tabindex="-1">TypeScript</button>
+          <button type="button" role="menuitemradio" aria-checked="false" data-language="javascript" tabindex="-1">JavaScript</button>
+        </div>
       </div>
     </footer>
 
@@ -741,6 +748,7 @@ packageJson.name</code></pre>
     <div id="tooltip-history" class="tooltip" popover="hint">Version history</div>
     <div id="tooltip-issue" class="tooltip" popover="hint">Report an issue</div>
     <div id="tooltip-settings" class="tooltip" popover="hint">Settings</div>
+    <div id="tooltip-language" class="tooltip" popover="hint" role="tooltip">Select syntax language</div>
 
     <!-- Editor side panels -->
     <aside id="history-modal" class="editor-side-panel history-side-panel" aria-labelledby="history-title"

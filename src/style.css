@@ -252,7 +252,7 @@ body {
   white-space: nowrap;
   transition: color 0.12s ease, background-color 0.12s ease;
 
-  /* Icono de tipo de fichero: todas las pestañas son modelos TypeScript. */
+  /* File language badge. */
   &::before {
     content: 'TS';
     flex: 0 0 auto;
@@ -570,7 +570,7 @@ body {
   gap: 16px;
   height: var(--wb-statusbar-height);
   box-sizing: border-box;
-  padding: 0 12px;
+  padding: 0 0 0 12px;
   color: var(--wb-fg-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -587,6 +587,102 @@ body {
 
 .status-item:empty {
   display: none;
+}
+
+.status-language {
+  position: relative;
+  appearance: none;
+  height: var(--wb-statusbar-height);
+  padding: 0 28px 0 12px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  /* Chevron drawn with currentColor so it follows the theme. */
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    width: 10px;
+    height: 10px;
+    translate: 0 -50%;
+    background-color: currentColor;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='m2 4 3 3 3-3' fill='none' stroke='black' stroke-width='1.2'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+.status-language:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.status-language:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background-color: var(--wb-hover);
+}
+
+.status-language:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+.status-language-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  box-sizing: border-box;
+  border: 1px solid var(--wb-border-strong);
+  border-radius: 6px;
+  background: var(--color-bg-secondary);
+  box-shadow: var(--surface-panel-shadow);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.status-language-menu button {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.status-language-menu button:hover,
+.status-language-menu button:focus-visible {
+  outline: none;
+  background: var(--wb-hover);
+}
+
+.status-language-menu button[aria-checked='true'] {
+  background: var(--wb-active);
+}
+
+.tab-item[data-language='javascript']::before {
+  content: 'JS';
+  color: #f7df1e;
+}
+
+/* Light themes already recolor the badge (see `.tab-item::before` overrides);
+   amber keeps "JS" readable on white (5:1). */
+:root[data-theme-type='light'] .tab-item[data-language='javascript']::before {
+  color: #8a6a00;
 }
 
 /* Marca de GoJS (enlace a la home) en el extremo izquierdo de la barra de estado. */
