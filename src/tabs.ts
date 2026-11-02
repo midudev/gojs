@@ -326,9 +326,12 @@ export function setActiveTabLanguage(language: EditorLanguage) {
 }
 
 export function newTab() {
+  // New tabs keep the language of the tab the user is working in.
+  const active = state.tabs.find((t) => t.id === state.activeId)
   const tab: Tab = {
     id: generateId(),
     content: '',
+    language: active ? getTabLanguage(active) : 'typescript',
     isDirty: false,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -486,7 +489,7 @@ function initLanguageSelector() {
   const positionMenu = () => {
     const bounds = trigger.getBoundingClientRect()
     menu.style.right = `${window.innerWidth - bounds.right}px`
-    menu.style.bottom = `${window.innerHeight - bounds.top}px`
+    menu.style.bottom = `${window.innerHeight - bounds.top + 4}px`
     menu.style.minWidth = `${bounds.width}px`
   }
   menu.addEventListener('beforetoggle', (event) => {
@@ -530,6 +533,10 @@ function initLanguageSelector() {
   window.addEventListener('resize', () => {
     if (menu.matches(':popover-open')) positionMenu()
   })
+
+  // The trigger ships disabled: `popovertarget` would otherwise open the menu
+  // natively before these listeners exist, unpositioned in the top-left corner.
+  trigger.disabled = false
 }
 
 export function initTabs(editorInstance: EditorLike, monacoInstance: MonacoLike, onActivated?: () => void) {
