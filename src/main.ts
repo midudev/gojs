@@ -100,6 +100,7 @@ import {
   type NodeInfo,
 } from './native-runtime'
 import { getLlamaInfo, type LlamaInfo, type LlamaModelInfo } from './llama-runtime'
+import { getMenuBarInfo, setMenuBarVisible } from './native-menu-bar'
 import { registerAiAutocomplete } from './ai-autocomplete'
 import { destroyAutocompleteValidator, rankAutocompleteCandidates } from './ai-autocomplete-validator'
 import { NODE_TYPES_FILES, NODE_TYPES_VERSION } from './node-types.generated'
@@ -2389,6 +2390,9 @@ async function setupNativeMenu() {
       case 'settings':
         document.getElementById('settings-button')?.click()
         break
+      case 'toggle-menu-bar':
+        void applyMenuBarVisibility(false)
+        break
     }
   })
 
@@ -2397,6 +2401,40 @@ async function setupNativeMenu() {
   } else {
     unlistenNativeMenu = unlisten
   }
+}
+
+// Windows/Linux desktop: the native menu bar sits inside the window and can be
+// hidden (issue #8). The backend owns and persists the state; this keeps the
+// Settings checkbox in sync with it.
+async function applyMenuBarVisibility(visible: boolean) {
+  const checkbox = $('#setting-menu-bar') as HTMLInputElement | null
+  try {
+    const info = await setMenuBarVisible(visible)
+    if (checkbox) checkbox.checked = info.visible
+  } catch (error) {
+    console.error('Could not change the menu bar visibility', error)
+    if (checkbox) checkbox.checked = !visible
+  }
+}
+
+async function setupMenuBarSetting() {
+  if (!isTauri()) return
+  const item = $('#setting-menu-bar-item') as HTMLElement | null
+  const checkbox = $('#setting-menu-bar') as HTMLInputElement | null
+  if (!item || !checkbox) return
+
+  try {
+    const info = await getMenuBarInfo()
+    if (!info.supported) return
+    checkbox.checked = info.visible
+    item.hidden = false
+  } catch {
+    return
+  }
+
+  checkbox.addEventListener('change', () => {
+    void applyMenuBarVisibility(checkbox.checked)
+  })
 }
 
 // Configurar eventos del editor
@@ -5121,6 +5159,7 @@ async function start() {
   initHeaderPopovers()
 
   void setupNativeMenu()
+  void setupMenuBarSetting()
 
   // Configurar el runtime nativo de Node.js (solo tiene efecto en desktop)
   void setupNativeRuntimeUI()

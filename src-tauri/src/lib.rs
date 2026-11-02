@@ -1,4 +1,5 @@
 mod llama_runtime;
+mod menu_bar;
 mod node_runtime;
 
 use tauri::{
@@ -98,17 +99,19 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let version_history =
         MenuItemBuilder::with_id("version-history", "Version History").build(app)?;
     let settings = menu_item(app, "settings", "Settings…", "CmdOrCtrl+,")?;
-    menu.append(
-        &SubmenuBuilder::new(app, "View")
-            .item(&toggle_layout)
-            .item(&toggle_ai)
-            .separator()
-            .item(&version_history)
-            .item(&settings)
-            .separator()
-            .fullscreen()
-            .build()?,
-    )?;
+    let view = SubmenuBuilder::new(app, "View")
+        .item(&toggle_layout)
+        .item(&toggle_ai)
+        .separator()
+        .item(&version_history)
+        .item(&settings)
+        .separator()
+        .fullscreen();
+    // Windows/Linux draw the menu bar inside the window. It can be shown again
+    // from Settings → Appearance, so this item only needs to hide it.
+    #[cfg(not(target_os = "macos"))]
+    let view = view.item(&MenuItemBuilder::with_id("toggle-menu-bar", "Hide Menu Bar").build(app)?);
+    menu.append(&view.build()?)?;
 
     let close_window = menu_item(app, "close-window", "Close Window", "CmdOrCtrl+Shift+W")?;
     menu.append(
@@ -161,6 +164,12 @@ pub fn run() {
         .manage(node_runtime::RunControl::default())
         // Native llama.cpp server lifecycle (desktop AI backend).
         .manage(llama_runtime::LlamaState::default())
+        // Menu bar visibility on Windows/Linux (no-op on macOS).
+        .manage(menu_bar::MenuBarState::default())
+        .setup(|app| {
+            menu_bar::restore(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             node_runtime::node_info,
             node_runtime::node_run,
@@ -177,6 +186,8 @@ pub fn run() {
             llama_runtime::llama_cancel,
             llama_runtime::llama_stop,
             llama_runtime::llama_uninstall,
+            menu_bar::menu_bar_info,
+            menu_bar::menu_bar_set_visible,
         ])
         .run(tauri::generate_context!())
         .expect("error while running GoJS desktop application");
