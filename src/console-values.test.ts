@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   appendFormattedValue,
+  createConsoleObjectTree,
   formatConsoleValueText,
+  getConsoleCollection,
   isSerializedConsoleArguments,
   serializeConsoleArguments,
   serializeConsoleValue,
@@ -133,5 +135,34 @@ describe('console value serialization', () => {
         serializeConsoleValue([{ date, count: 10n, set: new Set([1]) }]),
       ),
     ).toBe('[{ date: 2026-10-23T10:20:30.000Z, count: 10n, set: Set(1) { 1 } }]')
+  })
+
+  it('formats Map keys once, with an arrow separator', () => {
+    const map = new Map<unknown, unknown>([
+      ['a', [100, 130]],
+      [1, 'one'],
+      ['user name', true],
+    ])
+
+    for (const value of [map, serializeConsoleValue(map)]) {
+      expect(getConsoleCollection(value)?.entries.map(([prefix]) => prefix)).toEqual([
+        '"a" => ',
+        '1 => ',
+        '"user name" => ',
+      ])
+    }
+
+    expect(getConsoleCollection({ name: 'midu', 'user-id': 1 })?.entries.map(([prefix]) => prefix)).toEqual([
+      'name: ',
+      '"user-id": ',
+    ])
+  })
+
+  it.runIf(hasDocument)('renders Map entries without double-escaping string keys', () => {
+    const tree = createConsoleObjectTree(serializeConsoleValue(new Map<string, unknown>([['a', [1, 2]], ['b', 3]])))
+    const keys = Array.from(tree.querySelectorAll('.log-json-key')).map((node) => node.textContent)
+
+    expect(keys).toEqual(['"a" => ', '0: ', '1: ', '"b" => '])
+    expect(tree.textContent).not.toContain('\\"')
   })
 })

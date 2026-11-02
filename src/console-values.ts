@@ -270,6 +270,7 @@ export function formatConsoleValueText(value: any, seen = new WeakSet<object>())
 }
 
 export type ConsoleCollection = {
+  /** `[keyPrefix, value]` pairs; the prefix is display-ready (`name: `, `0: `, `"a" => `). */
   entries: Array<[string, any]>
   open: string
   closed: string
@@ -279,7 +280,7 @@ export type ConsoleCollection = {
 export function getConsoleCollection(value: any): ConsoleCollection | null {
   if (Array.isArray(value)) {
     return {
-      entries: value.map((item, index) => [String(index), item]),
+      entries: value.map((item, index) => [`${index}: `, item]),
       open: `Array(${value.length}) [`,
       closed: `Array(${value.length}) […]`,
       close: ']',
@@ -289,7 +290,7 @@ export function getConsoleCollection(value: any): ConsoleCollection | null {
   if (isSerializedConsoleValue(value)) {
     if (value.__type === 'Set') {
       return {
-        entries: value.__values.map((item, index) => [String(index), item]),
+        entries: value.__values.map((item, index) => [`${index}: `, item]),
         open: `Set(${value.__values.length}) {`,
         closed: `Set(${value.__values.length}) {…}`,
         close: '}',
@@ -298,7 +299,7 @@ export function getConsoleCollection(value: any): ConsoleCollection | null {
 
     if (value.__type === 'Map') {
       return {
-        entries: value.__entries.map(([key, item]) => [formatConsoleValueText(key), item]),
+        entries: value.__entries.map(([key, item]) => [formatMapEntryKey(key), item]),
         open: `Map(${value.__entries.length}) {`,
         closed: `Map(${value.__entries.length}) {…}`,
         close: '}',
@@ -313,7 +314,7 @@ export function getConsoleCollection(value: any): ConsoleCollection | null {
   if (value instanceof Set) {
     const values = Array.from(value)
     return {
-      entries: values.map((item, index) => [String(index), item]),
+      entries: values.map((item, index) => [`${index}: `, item]),
       open: `Set(${values.length}) {`,
       closed: `Set(${values.length}) {…}`,
       close: '}',
@@ -323,7 +324,7 @@ export function getConsoleCollection(value: any): ConsoleCollection | null {
   if (value instanceof Map) {
     const entries = Array.from(value.entries())
     return {
-      entries: entries.map(([key, item]) => [formatConsoleValueText(key), item]),
+      entries: entries.map(([key, item]) => [formatMapEntryKey(key), item]),
       open: `Map(${entries.length}) {`,
       closed: `Map(${entries.length}) {…}`,
       close: '}',
@@ -333,7 +334,7 @@ export function getConsoleCollection(value: any): ConsoleCollection | null {
   if (!isSerializableObjectRecord(value)) return null
 
   return {
-    entries: Object.entries(value),
+    entries: Object.entries(value).map(([key, item]) => [`${formatConsoleObjectKey(key)}: `, item]),
     open: '{',
     closed: '{…}',
     close: '}',
@@ -344,9 +345,14 @@ function formatConsoleObjectKey(key: string): string {
   return /^[A-Za-z_$][\w$]*$/.test(key) || /^\d+$/.test(key) ? key : JSON.stringify(key)
 }
 
+// Map keys can be any value, so they are shown like Node/DevTools: `"a" => value`.
+function formatMapEntryKey(key: any): string {
+  return `${formatConsoleValueText(key)} => `
+}
+
 export function createConsoleObjectTree(
   value: any,
-  label?: string,
+  keyPrefix?: string,
   seen = new WeakSet<object>(),
 ): HTMLElement {
   const collection = getConsoleCollection(value)
@@ -359,10 +365,10 @@ export function createConsoleObjectTree(
   if (typeof value === 'object' && value !== null) {
     if (seen.has(value)) {
       const circular = document.createElement('span')
-      if (label !== undefined) {
+      if (keyPrefix !== undefined) {
         const key = document.createElement('span')
         key.className = 'log-json-key'
-        key.textContent = `${formatConsoleObjectKey(label)}: `
+        key.textContent = keyPrefix
         circular.appendChild(key)
       }
       const valueSpan = document.createElement('span')
@@ -378,10 +384,10 @@ export function createConsoleObjectTree(
     if (collection.entries.length === 0) {
       const empty = document.createElement('span')
       empty.className = 'log-object-empty'
-      if (label !== undefined) {
+      if (keyPrefix !== undefined) {
         const key = document.createElement('span')
         key.className = 'log-json-key'
-        key.textContent = `${formatConsoleObjectKey(label)}: `
+        key.textContent = keyPrefix
         empty.appendChild(key)
       }
       empty.appendChild(document.createTextNode(collection.open + collection.close))
@@ -402,10 +408,10 @@ export function createConsoleObjectTree(
     chevron.textContent = '›'
     summary.appendChild(chevron)
 
-    if (label !== undefined) {
+    if (keyPrefix !== undefined) {
       const key = document.createElement('span')
       key.className = 'log-json-key'
-      key.textContent = `${formatConsoleObjectKey(label)}: `
+      key.textContent = keyPrefix
       summary.appendChild(key)
     }
 
@@ -424,10 +430,10 @@ export function createConsoleObjectTree(
     const body = document.createElement('div')
     body.className = 'log-object-body'
 
-    for (const [keyText, item] of collection.entries) {
+    for (const [entryPrefix, item] of collection.entries) {
       const nestedCollection = getConsoleCollection(item)
       if (nestedCollection) {
-        body.appendChild(createConsoleObjectTree(item, keyText, seen))
+        body.appendChild(createConsoleObjectTree(item, entryPrefix, seen))
         continue
       }
 
@@ -436,7 +442,7 @@ export function createConsoleObjectTree(
 
       const key = document.createElement('span')
       key.className = 'log-json-key'
-      key.textContent = `${formatConsoleObjectKey(keyText)}: `
+      key.textContent = entryPrefix
       row.appendChild(key)
       appendFormattedValue(row, item, seen)
       body.appendChild(row)
