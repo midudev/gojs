@@ -43,6 +43,8 @@ class ResizePanels extends HTMLElement {
   private dragRafId: number | null = null
   private dragPointer: number = 0
   private mutationObserver?: MutationObserver
+  private resizeObserver?: ResizeObserver
+  private lastHostSize: number = 0
   private layoutUpdateScheduled: boolean = false
   private onDividerMouseDownBound: (e: MouseEvent) => void
   private onMouseMoveBound: (e: MouseEvent) => void
@@ -67,6 +69,7 @@ class ResizePanels extends HTMLElement {
     this.setupPanels()
     this.setupDividers()
     this.observeSlotChanges()
+    this.observeHostSize()
     this.scheduleLayoutUpdate()
   }
 
@@ -76,6 +79,11 @@ class ResizePanels extends HTMLElement {
     if (this.mutationObserver) {
       this.mutationObserver.disconnect()
       this.mutationObserver = undefined
+    }
+
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect()
+      this.resizeObserver = undefined
     }
 
     if (this.globalListenersAttached) {
@@ -527,6 +535,23 @@ class ResizePanels extends HTMLElement {
     })
 
     this.reobserveChildren()
+  }
+
+  // Los paneles guardan su tamaño en px: si la ventana (o el contenedor) cambia
+  // de tamaño, hay que repartir el nuevo espacio. Sin esto quedaba un hueco al
+  // agrandar la ventana o el último panel se recortaba al encogerla.
+  // Se recalcula dentro del propio callback (tras el layout, antes del pintado)
+  // para que no se vea un frame con el tamaño antiguo.
+  private observeHostSize() {
+    if (this.resizeObserver) return
+    this.resizeObserver = new ResizeObserver(() => {
+      const rect = this.getBoundingClientRect()
+      const size = this.isHorizontal ? rect.width : rect.height
+      if (size === this.lastHostSize) return
+      this.lastHostSize = size
+      this.updateVisiblePanels()
+    })
+    this.resizeObserver.observe(this)
   }
 
   // Observa SOLO los hijos directos (paneles) y sus atributos de visibilidad, sin
