@@ -1741,10 +1741,15 @@ async function initEditor() {
   // Inicializar sistema de pestañas (tabs) y re-ejecutar al activar.
   // El modelo activo ya está en el editor; initTabs reutiliza el estado
   // restaurado por createActiveTabModel (sin segundo swap de contenido).
+  let tabsInitialized = false
   initTabs(editor, monaco, () => {
+    // Con el auto-run pausado no se ejecuta nada al cargar: initTabs dispara
+    // este callback una vez durante la restauración inicial.
+    if (!tabsInitialized && !autoRunEnabled) return
     // Re-ejecutar el código de la pestaña activa para refrescar la salida
     runCode()
   })
+  tabsInitialized = true
 
   // Inicializar el panel de historial de versiones
   initHistoryPanel()

@@ -147,6 +147,21 @@ export async function getChromePromptApiAvailability(): Promise<unknown> {
   return languageModel.availability(PROMPT_API_SESSION_OPTIONS)
 }
 
+// En algunos Chrome (p. ej. automatizados) `availability()` no resuelve nunca.
+// Quien espera la comprobación (el arranque de la app) no puede quedarse colgado.
+const AVAILABILITY_CHECK_TIMEOUT_MS = 2000
+
+function withAvailabilityTimeout(check: unknown): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn('Chrome Prompt API availability check timed out')
+      resolve(null)
+    }, AVAILABILITY_CHECK_TIMEOUT_MS)
+  })
+  return Promise.race([Promise.resolve(check), timeout]).finally(() => clearTimeout(timer))
+}
+
 export async function isChromePromptApiAvailable(): Promise<boolean> {
   if (!isChromeBrowser()) return false
 
@@ -155,11 +170,11 @@ export async function isChromePromptApiAvailable(): Promise<boolean> {
 
   try {
     if (languageModel.availability) {
-      return isAvailabilityReady(await getChromePromptApiAvailability())
+      return isAvailabilityReady(await withAvailabilityTimeout(getChromePromptApiAvailability()))
     }
 
     if (languageModel.capabilities) {
-      return isAvailabilityReady(await languageModel.capabilities())
+      return isAvailabilityReady(await withAvailabilityTimeout(languageModel.capabilities()))
     }
   } catch (error) {
     console.warn('Error checking Chrome Prompt API availability:', error)
