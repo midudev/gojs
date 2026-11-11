@@ -29,6 +29,10 @@ function applySavedWorkbenchLayout(): void {
       document.getElementById('robot-icon')?.setAttribute('hidden', '')
       document.getElementById('robot-off-icon')?.removeAttribute('hidden')
     }
+    if (settings?.autoRun === false) {
+      document.getElementById('pause-icon')?.setAttribute('hidden', '')
+      document.getElementById('play-icon')?.removeAttribute('hidden')
+    }
   } catch {
     // Sin ajustes válidos: main.ts aplica los valores por defecto.
   }

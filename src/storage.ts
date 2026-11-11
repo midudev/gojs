@@ -65,6 +65,9 @@ export interface EditorSettings {
   indentGuides: boolean
   renderWhitespace: RenderWhitespace
   debounceDelay: number
+  // Si el código se ejecuta solo al escribir. El botón de pausa lo desactiva y
+  // la elección se conserva entre recargas (issue #14).
+  autoRun: boolean
   autoLogExpressions: boolean
   formatOnPaste: boolean
   formatOnType: boolean
@@ -91,6 +94,7 @@ export const DEFAULT_SETTINGS: EditorSettings = {
   indentGuides: true,
   renderWhitespace: 'selection',
   debounceDelay: 400,
+  autoRun: true,
   autoLogExpressions: true,
   formatOnPaste: true,
   formatOnType: true,
@@ -194,6 +198,7 @@ function validateSettings(settings: Partial<EditorSettings>): EditorSettings {
       ? settings.renderWhitespace
       : DEFAULT_SETTINGS.renderWhitespace,
     debounceDelay: validateNumber(settings.debounceDelay, 100, 5000, DEFAULT_SETTINGS.debounceDelay),
+    autoRun: validateBoolean(settings.autoRun, DEFAULT_SETTINGS.autoRun),
     autoLogExpressions: validateBoolean(settings.autoLogExpressions, DEFAULT_SETTINGS.autoLogExpressions),
     formatOnPaste: validateBoolean(settings.formatOnPaste, DEFAULT_SETTINGS.formatOnPaste),
     formatOnType: validateBoolean(settings.formatOnType, DEFAULT_SETTINGS.formatOnType),

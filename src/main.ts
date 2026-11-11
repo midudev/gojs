@@ -465,6 +465,7 @@ if (isLandingEmbed) {
     aiEnabled: isAgentDemoEmbed,
     lineNumbers: true,
     lineTimings: true,
+    autoRun: true,
     autoLogExpressions: true,
     minimap: false,
     stickyScroll: false,
@@ -472,6 +473,9 @@ if (isLandingEmbed) {
     ...(isAgentDemoEmbed ? { fontSize: 13 } : {}),
   }
 }
+
+// Restaura la elección de auto-run guardada (issue #14).
+autoRunEnabled = currentSettings.autoRun
 
 if (isShowcaseEmbed) {
   document.documentElement.classList.add('showcase-embed')
@@ -4536,6 +4540,9 @@ async function start() {
 
     autorunToggleButton.addEventListener('click', () => {
       autoRunEnabled = !autoRunEnabled
+      // Los demos embebidos siempre arrancan con auto-run: no persisten el cambio.
+      if (isLandingEmbed) currentSettings = { ...currentSettings, autoRun: autoRunEnabled }
+      else currentSettings = updateSetting(currentSettings, 'autoRun', autoRunEnabled)
       syncAutorunUI()
       if (autoRunEnabled) runCode()
     })
