@@ -34,7 +34,7 @@ use tauri_plugin_opener::OpenerExt;
 /// Guards concurrent npm operations: npm is not safe to run twice against the
 /// same `node_modules` at once, and it keeps the UI honest (one install a time).
 #[derive(Default)]
-pub struct NpmLock(Mutex<()>);
+pub struct NpmLock(Arc<Mutex<()>>);
 
 /// Absolute ceiling on a single native run, so a runaway program can never
 /// freeze the app even if the frontend forgets to pass a timeout.
@@ -278,12 +278,24 @@ fn read_version(cmd: &mut Command) -> Option<String> {
     }
 }
 
-// --- commands --------------------------------------------------------------
+/// Read the bundled npm version directly from its sibling `package.json`
+/// (`.../npm/bin/npm-cli.js` -> `.../npm/package.json`) instead of spawning
+/// `node npm-cli.js --version`, which loads hundreds of JS files on startup and
+/// is noticeably slow under Windows Defender real-time scanning.
+fn read_bundled_npm_version(npm_cli: &Path) -> Option<String> {
+    let pkg_json = npm_cli.parent()?.parent()?.join("package.json");
+    let text = std::fs::read_to_string(pkg_json).ok()?;
+    let json: Value = serde_json::from_str(&text).ok()?;
+    json.get("version")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(String::from)
+}
 
-#[tauri::command]
-pub fn node_info(app: AppHandle) -> Result<NodeInfo, String> {
-    let workspace = workspace_dir(&app)?.to_string_lossy().to_string();
-    let Some(resolved) = resolve(&app) else {
+fn probe_node_info(app: &AppHandle) -> Result<NodeInfo, String> {
+    let workspace = workspace_dir(app)?.to_string_lossy().to_string();
+    let Some(resolved) = resolve(app) else {
         return Ok(NodeInfo {
             available: false,
             version: None,
@@ -295,9 +307,15 @@ pub fn node_info(app: AppHandle) -> Result<NodeInfo, String> {
     };
 
     let version = read_version(&mut crate::background_command(&resolved.node));
-    let npm_version = npm_command(&resolved)
-        .ok()
-        .and_then(|mut c| read_version(&mut c));
+    let npm_version = resolved
+        .npm_cli
+        .as_deref()
+        .and_then(read_bundled_npm_version)
+        .or_else(|| {
+            npm_command(&resolved)
+                .ok()
+                .and_then(|mut c| read_version(&mut c))
+        });
 
     Ok(NodeInfo {
         available: version.is_some(),
@@ -313,6 +331,17 @@ pub fn node_info(app: AppHandle) -> Result<NodeInfo, String> {
         node_path: Some(resolved.node.to_string_lossy().to_string()),
         workspace,
     })
+}
+
+// --- commands --------------------------------------------------------------
+
+#[tauri::command]
+pub async fn node_info(app: AppHandle) -> Result<NodeInfo, String> {
+    // Run off the main UI thread so probing Node/npm on launch never blocks the
+    // window event loop or triggers "Not Responding" on Windows.
+    tauri::async_runtime::spawn_blocking(move || probe_node_info(&app))
+        .await
+        .map_err(|e| format!("node info task failed: {e}"))?
 }
 
 /// Run `code` with the native runtime. The code is written to a temp file inside
@@ -509,30 +538,34 @@ fn pump<R: std::io::Read + Send + 'static>(
 /// List declared + installed dependencies by reconciling `package.json` against
 /// what is actually present in `node_modules`.
 #[tauri::command]
-pub fn deps_list(app: AppHandle) -> Result<Vec<Dependency>, String> {
-    let ws = workspace_dir(&app)?;
+pub async fn deps_list(app: AppHandle) -> Result<Vec<Dependency>, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Dependency>, String> {
+        let ws = workspace_dir(&app)?;
 
-    let mut wanted: std::collections::BTreeMap<String, Option<String>> = Default::default();
-    if let Ok(text) = std::fs::read_to_string(ws.join("package.json")) {
-        if let Ok(pkg) = serde_json::from_str::<Value>(&text) {
-            if let Some(deps) = pkg.get("dependencies").and_then(Value::as_object) {
-                for (name, range) in deps {
-                    wanted.insert(name.clone(), range.as_str().map(String::from));
+        let mut wanted: std::collections::BTreeMap<String, Option<String>> = Default::default();
+        if let Ok(text) = std::fs::read_to_string(ws.join("package.json")) {
+            if let Ok(pkg) = serde_json::from_str::<Value>(&text) {
+                if let Some(deps) = pkg.get("dependencies").and_then(Value::as_object) {
+                    for (name, range) in deps {
+                        wanted.insert(name.clone(), range.as_str().map(String::from));
+                    }
                 }
             }
         }
-    }
 
-    let mut deps: Vec<Dependency> = Vec::new();
-    for (name, range) in &wanted {
-        deps.push(Dependency {
-            name: name.clone(),
-            wanted: range.clone(),
-            installed: installed_version(&ws, name),
-        });
-    }
+        let mut deps: Vec<Dependency> = Vec::new();
+        for (name, range) in &wanted {
+            deps.push(Dependency {
+                name: name.clone(),
+                wanted: range.clone(),
+                installed: installed_version(&ws, name),
+            });
+        }
 
-    Ok(deps)
+        Ok(deps)
+    })
+    .await
+    .map_err(|e| format!("deps list task failed: {e}"))?
 }
 
 fn installed_version(ws: &Path, name: &str) -> Option<String> {
@@ -545,9 +578,8 @@ fn installed_version(ws: &Path, name: &str) -> Option<String> {
         .map(String::from)
 }
 
-fn run_npm(app: &AppHandle, lock: &State<'_, NpmLock>, args: &[&str]) -> Result<RunResult, String> {
+fn run_npm(app: &AppHandle, lock: &Mutex<()>, args: &[&str]) -> Result<RunResult, String> {
     let _guard = lock
-        .0
         .lock()
         .map_err(|_| "npm is temporarily unavailable; restart the app and try again")?;
     let resolved = resolve(app)
@@ -667,7 +699,7 @@ fn valid_pkg_version(version: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn deps_add(
+pub async fn deps_add(
     app: AppHandle,
     lock: State<'_, NpmLock>,
     name: String,
@@ -691,11 +723,16 @@ pub fn deps_add(
         Some(v) if !v.is_empty() && v != "latest" => format!("{name}@{v}"),
         _ => name.clone(),
     };
-    run_npm(&app, &lock, &["install", &spec, "--save"])
+    let lock = lock.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_npm(&app, &lock, &["install", &spec, "--save"])
+    })
+    .await
+    .map_err(|e| format!("npm install task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn deps_remove(
+pub async fn deps_remove(
     app: AppHandle,
     lock: State<'_, NpmLock>,
     name: String,
@@ -705,12 +742,17 @@ pub fn deps_remove(
             "Invalid package name. Use “package-name” or “@scope/package-name” with lowercase letters, numbers, dots, underscores, or hyphens.".to_string(),
         );
     }
-    run_npm(&app, &lock, &["uninstall", &name, "--save"])
+    let lock = lock.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_npm(&app, &lock, &["uninstall", &name, "--save"])
+    })
+    .await
+    .map_err(|e| format!("npm uninstall task failed: {e}"))?
 }
 
 /// Change the installed version of an existing dependency (`name@version`).
 #[tauri::command]
-pub fn deps_update(
+pub async fn deps_update(
     app: AppHandle,
     lock: State<'_, NpmLock>,
     name: String,
@@ -732,7 +774,12 @@ pub fn deps_update(
     } else {
         format!("{name}@{version}")
     };
-    run_npm(&app, &lock, &["install", &spec, "--save"])
+    let lock = lock.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        run_npm(&app, &lock, &["install", &spec, "--save"])
+    })
+    .await
+    .map_err(|e| format!("npm update task failed: {e}"))?
 }
 
 /// Reveal the workspace folder so power users can inspect it.
@@ -748,7 +795,7 @@ pub fn workspace_reveal(app: AppHandle) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{valid_pkg_name, valid_pkg_version};
+    use super::{read_bundled_npm_version, valid_pkg_name, valid_pkg_version};
 
     #[test]
     fn accepts_valid_package_names() {
@@ -814,5 +861,30 @@ mod tests {
                 "expected {version:?} to be invalid"
             );
         }
+    }
+
+    #[test]
+    fn reads_bundled_npm_version_from_sibling_package_json() {
+        let base =
+            std::env::temp_dir().join(format!("gojs-npm-version-test-{}", std::process::id()));
+        let bin_dir = base.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let npm_cli = bin_dir.join("npm-cli.js");
+        std::fs::write(&npm_cli, "// stub").unwrap();
+        std::fs::write(
+            base.join("package.json"),
+            r#"{"name":"npm","version":"11.4.2"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            read_bundled_npm_version(&npm_cli).as_deref(),
+            Some("11.4.2")
+        );
+
+        std::fs::remove_file(base.join("package.json")).unwrap();
+        assert_eq!(read_bundled_npm_version(&npm_cli), None);
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
