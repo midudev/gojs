@@ -21,6 +21,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -76,16 +77,42 @@ async function verifyChecksum(archive, archiveName) {
   }
 }
 
-function extract(archive, into, win) {
-  if (win) {
-    // PowerShell is present on every supported Windows host.
-    execFileSync(
-      'powershell',
-      ['-NoProfile', '-Command', `Expand-Archive -Force -Path '${archive}' -DestinationPath '${into}'`],
-      { stdio: 'inherit' },
-    )
-  } else {
-    execFileSync('tar', ['-xzf', archive, '-C', into], { stdio: 'inherit' })
+function envWithoutPSModulePath(env) {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'))
+}
+
+export function extract(
+  archive,
+  into,
+  win,
+  { exec = execFileSync, platform = process.platform, env = process.env } = {},
+) {
+  if (!win) {
+    exec('tar', ['-xzf', archive, '-C', into], { stdio: 'inherit' })
+    return
+  }
+
+  if (platform !== 'win32') {
+    exec('unzip', ['-qo', archive, '-d', into], { stdio: 'inherit' })
+    return
+  }
+
+  const expandCommand =
+    "$ErrorActionPreference = 'Stop'; Expand-Archive -Force -LiteralPath $env:GOJS_ARCHIVE -DestinationPath $env:GOJS_DEST"
+  const args = ['-NoProfile', '-Command', expandCommand]
+  const baseEnv = { ...env, GOJS_ARCHIVE: archive, GOJS_DEST: into }
+
+  // Prefer PowerShell 7 (`pwsh`) when available: Windows PowerShell 5.1 can
+  // inherit `PSModulePath` from a parent `pwsh` session and load an
+  // incompatible `Microsoft.PowerShell.Archive` module (.NET 5+ 3-arg
+  // `ZipFile::ExtractToDirectory` overload).
+  try {
+    exec('pwsh', args, { stdio: 'inherit', env: baseEnv })
+  } catch (err) {
+    if (err?.code !== 'ENOENT') throw err
+    // Fall back to Windows PowerShell 5.1 with a clean `PSModulePath` so it
+    // loads its own built-in `Microsoft.PowerShell.Archive` module.
+    exec('powershell', args, { stdio: 'inherit', env: envWithoutPSModulePath(baseEnv) })
   }
 }
 
@@ -155,8 +182,21 @@ async function main() {
   console.log(`✓ Bundled Node ${NODE_VERSION} (${os}-${arch}) into src-tauri/runtime`)
 }
 
-main().catch((err) => {
-  console.error(`✗ fetch-node: ${err.message}`)
-  console.error('  The desktop app will fall back to a system Node on PATH until this succeeds.')
-  process.exit(1)
-})
+function isEntrypoint() {
+  if (!process.argv[1]) return false
+  try {
+    const entry = realpathSync(process.argv[1])
+    const self = realpathSync(fileURLToPath(import.meta.url))
+    return process.platform === 'win32' ? entry.toLowerCase() === self.toLowerCase() : entry === self
+  } catch {
+    return false
+  }
+}
+
+if (isEntrypoint()) {
+  main().catch((err) => {
+    console.error(`✗ fetch-node: ${err.message}`)
+    console.error('  The desktop app will fall back to a system Node on PATH until this succeeds.')
+    process.exit(1)
+  })
+}
