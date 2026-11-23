@@ -2,11 +2,33 @@ mod llama_runtime;
 mod menu_bar;
 mod node_runtime;
 
+use std::ffi::OsStr;
+use std::process::Command;
+
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItemBuilder, SubmenuBuilder},
     Emitter, Manager,
 };
 use tauri_plugin_opener::OpenerExt;
+
+/// Create a child-process `Command` that does not open a console window on
+/// Windows. The release desktop binary uses `windows_subsystem = "windows"`, so
+/// spawning console executables (`node.exe`, `npm.cmd`, `taskkill`,
+/// `llama-server.exe`) without `CREATE_NO_WINDOW` flashes a visible terminal.
+pub(crate) fn background_command(program: impl AsRef<OsStr>) -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = Command::new(program);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new(program)
+    }
+}
 
 fn menu_item(
     app: &tauri::AppHandle,
@@ -191,4 +213,15 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running GoJS desktop application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::background_command;
+
+    #[test]
+    fn background_command_sets_requested_program() {
+        let cmd = background_command("node");
+        assert_eq!(cmd.get_program(), "node");
+    }
 }

@@ -81,7 +81,7 @@ fn kill_tree(child: &mut Child) {
         // Child::kill only terminates npm.cmd/node itself. taskkill /T also
         // terminates installers and lifecycle scripts spawned underneath it.
         let pid = child.id().to_string();
-        let _ = Command::new("taskkill")
+        let _ = crate::background_command("taskkill")
             .args(["/PID", pid.as_str(), "/T", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -247,7 +247,7 @@ fn workspace_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// or the resolved `npm`/`npm.cmd` (system) keeps a single code path.
 fn npm_command(resolved: &Resolved) -> Result<Command, String> {
     if let Some(cli) = &resolved.npm_cli {
-        let mut cmd = Command::new(&resolved.node);
+        let mut cmd = crate::background_command(&resolved.node);
         cmd.arg(cli);
         Ok(cmd)
     } else {
@@ -256,11 +256,11 @@ fn npm_command(resolved: &Resolved) -> Result<Command, String> {
         if let Some(dir) = resolved.node.parent() {
             let sibling = dir.join(candidate);
             if sibling.exists() {
-                return Ok(Command::new(sibling));
+                return Ok(crate::background_command(sibling));
             }
         }
         which::which(candidate)
-            .map(Command::new)
+            .map(crate::background_command)
             .map_err(|_| {
                 "npm is unavailable. Install npm next to Node.js or set GOJS_NODE_PATH to a complete Node.js installation.".to_string()
             })
@@ -270,7 +270,7 @@ fn npm_command(resolved: &Resolved) -> Result<Command, String> {
 // --- helpers ---------------------------------------------------------------
 
 fn read_version(cmd: &mut Command) -> Option<String> {
-    let out = cmd.arg("--version").output().ok()?;
+    let out = cmd.arg("--version").stdin(Stdio::null()).output().ok()?;
     if out.status.success() {
         Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
     } else {
@@ -294,7 +294,7 @@ pub fn node_info(app: AppHandle) -> Result<NodeInfo, String> {
         });
     };
 
-    let version = read_version(&mut Command::new(&resolved.node));
+    let version = read_version(&mut crate::background_command(&resolved.node));
     let npm_version = npm_command(&resolved)
         .ok()
         .and_then(|mut c| read_version(&mut c));
@@ -366,7 +366,7 @@ pub async fn node_run(
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<RunResult, String> {
         let started = Instant::now();
 
-        let mut command = Command::new(&node);
+        let mut command = crate::background_command(&node);
         command
             .arg("--experimental-strip-types")
             .arg(&entry)

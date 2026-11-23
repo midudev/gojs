@@ -23,7 +23,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -139,7 +139,7 @@ fn kill_tree(child: &mut Child) {
     #[cfg(windows)]
     {
         let pid = child.id().to_string();
-        let _ = Command::new("taskkill")
+        let _ = crate::background_command("taskkill")
             .args(["/PID", pid.as_str(), "/T", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -517,7 +517,7 @@ fn start_server(
         },
     );
 
-    let mut command = Command::new(server_bin);
+    let mut command = crate::background_command(server_bin);
     command
         .arg("-m")
         .arg(model_file)
